@@ -281,7 +281,9 @@ def convert_beaver_questions_to_dailsql_format(dataset, beaver_questions_path, o
     # Load spacy for tokenization
     nlp = spacy.load("en_core_web_sm")
 
-    retrieved_tables = get_retrieved_tables(dataset)
+    retrieved_tables = None
+    if option == 1:
+        retrieved_tables = get_retrieved_tables(dataset)
     
     dailsql_format = []
     for question_info in tqdm(beaver_questions):
@@ -289,7 +291,7 @@ def convert_beaver_questions_to_dailsql_format(dataset, beaver_questions_path, o
 
         # Option 1+: Add gold tables to question
         if option >= 1:
-            if option == 1:
+            if option == 1 and retrieved_tables is not None:
                  gold_tables = retrieved_tables[question_info['id']]
             else:
                  gold_tables = question_info.get('tables', [])

@@ -234,7 +234,9 @@ def convert_beaver_questions_to_dinsql_format(dataset, beaver_questions_path, ou
     with open(beaver_questions_path, 'r') as f:
         beaver_questions = json.load(f)
     
-    retrieved_tables = get_retrieved_tables(dataset)
+    retrieved_tables = None
+    if option == 1:
+        retrieved_tables = get_retrieved_tables(dataset)
     
     dinsql_format = []
     for question_info in beaver_questions:
@@ -247,7 +249,7 @@ def convert_beaver_questions_to_dinsql_format(dataset, beaver_questions_path, ou
         
         # Option 1+: Store gold_tables for filtering
         if option >= 1:
-            if option == 1:
+            if option == 1 and retrieved_tables is not None:
                  base_item['tables'] = retrieved_tables[question_info['id']]
             else:
                  base_item['tables'] = question_info.get('tables', [])
