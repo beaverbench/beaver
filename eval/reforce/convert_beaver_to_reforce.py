@@ -325,7 +325,9 @@ def convert_beaver_to_reforce(dataset, beaver_questions_path, beaver_tables_path
                     new_join_keys.append([c.lower() for c in jk])
                 item['join_keys'] = new_join_keys
 
-    retrieved_tables = get_retrieved_tables(dataset)
+    retrieved_tables = None
+    if preprocessing_option == 1:
+        retrieved_tables = get_retrieved_tables(dataset)
 
     for idx, item in enumerate(beaver_questions):
         if (idx + 1) % 10 == 0:
