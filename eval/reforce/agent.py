@@ -117,7 +117,8 @@ class REFORCE:
         response = self.chat_session_pre.get_model_response(prompt, "sql")
 
         max_try = self.max_try
-        while max_try > 0 and (not isinstance(response, str) or len(response) > 1):
+        # Re-ask only if the reply had no SQL or several SQLs (get_model_response returns a list of code blocks)
+        while max_try > 0 and (not isinstance(response, list) or len(response) > 1):
             response = self.chat_session_pre.get_model_response("Please generate only one SQL with thinking process.", "sql")
             max_try -= 1
         logger.info("[Corrected SQL]\n" + self.chat_session_pre.messages[-1]['content'] + "\n[Corrected SQL]")
@@ -342,6 +343,7 @@ class REFORCE:
             max_try -= 1
         if max_try == 0:
             print(f"{search_directory} Empty")
+            chat_session.close()
             return
         with open(os.path.join(search_directory, response[0].strip())) as f:
             selected_sql = f.read()
@@ -353,6 +355,7 @@ class REFORCE:
                 f.write("[Vote]\n"+prompt+"\n[Vote]")
                 f.write(chat_session.messages[-1]['content'])
         sql_env.close_db()
+        chat_session.close()
 
     def vote_result(self, search_directory, args, sql_paths, table_info, task):
         # filter answer

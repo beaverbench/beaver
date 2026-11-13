@@ -1,7 +1,7 @@
 import os
 import argparse
 import glob
-from utils import get_table_info, initialize_logger, get_dictionary, get_sqlite_path
+from utils import get_table_info, initialize_logger, close_logger, get_dictionary, get_sqlite_path
 from agent import REFORCE
 from chat import GPTChat
 from prompt import Prompts
@@ -17,63 +17,77 @@ def execute(question, table_info, args, csv_save_path, log_save_path, sql_save_p
 
     # sql
     sql_env = SqlEnv()
-    # revote: execute sql if no csv
-    if os.path.exists(os.path.join(search_directory, sql_save_path)) and not os.path.exists(os.path.join(search_directory, csv_save_path)) and args.revote:
-        with open(os.path.join(search_directory, sql_save_path)) as f:
-            sql = f.read()
-        sql_env.execute_sql_api(sql, sql_data, os.path.join(search_directory, csv_save_path), sqlite_path=get_sqlite_path(args.db_path, sql_data, db_id, args.task))
-
-    if args.rerun:
-        if os.path.exists(os.path.join(search_directory, sql_save_path)):
-            return
-        else:
-            print(f"Rerun: {search_directory}")
-    # if log.log exists, pass
-    elif os.path.exists(os.path.join(search_directory, log_save_path)):
-        return
-
-    # remove files
-    self_files = glob.glob(os.path.join(search_directory, f'*{log_save_path}*'))
-    for self_file in self_files:
-        os.remove(self_file)
-
-    # log
-    log_file_path = os.path.join(search_directory, log_save_path)
-    logger = initialize_logger(log_file_path)
-    if format_csv:
-        logger.info("[Answer format]\n" + format_csv + "\n[Answer format]")
-    table_struct = table_info[table_info.find("The table structure information is "):]
-
-    # chat
     chat_session_ex = None
     chat_session = None
-    if args.do_column_exploration:
-        chat_session_ex = ChatClass(args.azure, args.column_exploration_model, temperature=args.temperature)
-    if args.generation_model:
-        chat_session = ChatClass(args.azure, args.generation_model, temperature=args.temperature)
+    logger = None
+    try:
+        # revote: execute sql if no csv
+        if os.path.exists(os.path.join(search_directory, sql_save_path)) and not os.path.exists(os.path.join(search_directory, csv_save_path)) and args.revote:
+            with open(os.path.join(search_directory, sql_save_path)) as f:
+                sql = f.read()
+            sql_env.execute_sql_api(sql, sql_data, os.path.join(search_directory, csv_save_path), sqlite_path=get_sqlite_path(args.db_path, sql_data, db_id, args.task))
 
-    # agent
-    agent = REFORCE(args.db_path, sql_data, search_directory, prompt_all, sql_env, chat_session_ex, chat_session, sql_data+'/'+log_save_path, db_id, task=args.task)
-
-    # do_column_exploration
-    pre_info, response_pre_txt = None, None
-    if args.do_column_exploration:
-        pre_info, response_pre_txt, max_try = agent.exploration(question, table_struct, table_info, logger)
-        if max_try <= 0:
-            print(f"{sql_data+'/'+log_save_path} Inadequate preparation, skip")
+        if args.rerun:
+            if os.path.exists(os.path.join(search_directory, sql_save_path)):
+                return
+            else:
+                print(f"Rerun: {search_directory}")
+        # if log.log exists, pass
+        elif os.path.exists(os.path.join(search_directory, log_save_path)):
             return
-        print(f"{sql_data+'/'+log_save_path}: chat_session_ex len: {chat_session_ex.get_message_len()}")
 
-    csv_save_path = os.path.join(search_directory, csv_save_path)
-    sql_save_path = os.path.join(search_directory, sql_save_path)
+        # remove files
+        self_files = glob.glob(os.path.join(search_directory, f'*{log_save_path}*'))
+        for self_file in self_files:
+            os.remove(self_file)
 
-    # answer
-    if args.do_self_refinement:
-        agent.self_refine(args, logger, question, format_csv, table_struct, table_info, response_pre_txt, pre_info, csv_save_path, sql_save_path, task=args.task)
-    elif args.generation_model:
-        agent.gen(args, logger, question, format_csv, table_struct, table_info, response_pre_txt, pre_info, csv_save_path, sql_save_path, task=args.task)
-    if args.generation_model:
-        agent.sql_env.close_db()
+        # log
+        log_file_path = os.path.join(search_directory, log_save_path)
+        logger = initialize_logger(log_file_path)
+        if format_csv:
+            logger.info("[Answer format]\n" + format_csv + "\n[Answer format]")
+        table_struct = table_info[table_info.find("The table structure information is "):]
+
+        # chat
+        if args.do_column_exploration:
+            chat_session_ex = ChatClass(args.azure, args.column_exploration_model, temperature=args.temperature)
+        if args.generation_model:
+            chat_session = ChatClass(args.azure, args.generation_model, temperature=args.temperature)
+
+        # agent
+        agent = REFORCE(args.db_path, sql_data, search_directory, prompt_all, sql_env, chat_session_ex, chat_session, sql_data+'/'+log_save_path, db_id, task=args.task)
+
+        # do_column_exploration
+        pre_info, response_pre_txt = None, None
+        if args.do_column_exploration:
+            pre_info, response_pre_txt, max_try = agent.exploration(question, table_struct, table_info, logger)
+            if max_try <= 0:
+                print(f"{sql_data+'/'+log_save_path} Inadequate preparation, skip")
+                return
+            print(f"{sql_data+'/'+log_save_path}: chat_session_ex len: {chat_session_ex.get_message_len()}")
+
+        csv_save_path = os.path.join(search_directory, csv_save_path)
+        sql_save_path = os.path.join(search_directory, sql_save_path)
+
+        # answer
+        if args.do_self_refinement:
+            agent.self_refine(args, logger, question, format_csv, table_struct, table_info, response_pre_txt, pre_info, csv_save_path, sql_save_path, task=args.task)
+        elif args.generation_model:
+            agent.gen(args, logger, question, format_csv, table_struct, table_info, response_pre_txt, pre_info, csv_save_path, sql_save_path, task=args.task)
+    finally:
+        # Always release resources so long runs don't exhaust file descriptors / DB connections,
+        # regardless of early returns, timeouts, or exceptions.
+        try:
+            sql_env.close_db()
+        except Exception:
+            pass
+        for _cs in (chat_session_ex, chat_session):
+            if _cs is not None:
+                try:
+                    _cs.close()
+                except Exception:
+                    pass
+        close_logger(logger)
     
 
 def main(args):

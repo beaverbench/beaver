@@ -50,6 +50,13 @@ OPENROUTER_API_KEY=xxx
 MYSQL_HOST=localhost
 MYSQL_USER=root
 MYSQL_PASSWORD=xxx
+
+# Optional (ReFoRCE only): if LLM_BASE_URL is set, ReFoRCE sends ALL requests to this
+# OpenAI-compatible endpoint (e.g., vLLM) and ignores OPENAI_API_KEY / OPENROUTER_API_KEY.
+# Always set LLM_API_KEY (any placeholder if the endpoint needs none).
+LLM_BASE_URL=xxx
+LLM_API_KEY=xxx
+LLM_RPM=30   # cap on requests per minute, for rate-limited endpoints
 ```
 
 ### Data Pre-processing
@@ -125,6 +132,14 @@ cd eval/[method]
 - `setting=0` *(default setting)*: Standard end-to-end setting with no hints. Base information with only the top-k tables retrieved from [table retrieval](#table-retrieval).
 - `setting=1`: With hints for three schema-linking subtasks. Includes gold tables, column mapping, and join keys.
 - `setting=2`: With hints for all five subtasks. Includes three subtasks in `setting=1`, domain knowledge, and subquery decomposition.
+
+ReFoRCE also accepts two optional arguments:
+```bash
+cd eval/reforce
+./run.sh --model [model] --dataset [dataset] --setting {0,1,2} --workers [workers] --timestamp [timestamp]
+```
+- `workers`: number of questions processed in parallel, each running 8 votes (default `16`). Lower it if you hit rate limits.
+- `timestamp`: resume an interrupted run by reusing its output folder (the `YYYYMMDD-HHMMSS` suffix of `output/...-log-[timestamp]`).
 
 ## Evaluation
 

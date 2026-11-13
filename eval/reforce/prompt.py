@@ -89,7 +89,7 @@ class Prompts:
     def get_exploration_prompt(self, api, table_struct):
         exploration_prompt = f"Write at most 10 {api} simple SQL queries in format like:\n {self.get_prompt_dialect_basic(api)}\nin ```sql``` code block to have an understanding of values in related columns.\n"
         exploration_prompt += "Each query should be different. Don't query about any SCHEMA or checking data types. You can write SELECT query only. Try to use DISTINCT. Don't output the final answer.\n"
-        exploration_prompt += "Write annotations to describe each SQL, format like ```sql\n--Description: \n```.\n"
+        exploration_prompt += "Write annotations to describe each SQL, format like ```sql\n-- Description: \n```.\n"
 
         # exploration_prompt += "When exploring a table, first generate a SQL query to view 5 distinct rows, then generate another SQL query with appropriate conditions.\n"
 
@@ -110,10 +110,10 @@ class Prompts:
         return exploration_prompt
 
     def get_exploration_refine_prompt(self, sql, corrected_sql, sqls, res):
-        return f"```sql\n{sql}``` is corrected to ```sql\n{corrected_sql}```. And the result is: \n{res}\n Please correct other sqls based on results if they have similar errors. Otherwise don't modify the SQL. SQLs: {sqls}. For each SQL, answer in ```sql\n--Description: \n``` format.\n"
+        return f"```sql\n{sql}``` is corrected to ```sql\n{corrected_sql}```. And the result is: \n{res}\n Please correct other sqls based on results if they have similar errors. Otherwise don't modify the SQL. SQLs: {sqls}. For each SQL, answer in ```sql\n-- Description: \n``` format.\n"
 
     def get_exploration_self_correct_prompt(self, sql, error):
-        return f"Input sql:\n{sql}\nThe error information is:\n" + str(error) + "\nPlease correct it based on previous context and output the thinking process with only one sql query in ```sql\n--Description: \n``` format. Don't just analyze without SQL or output several SQLs.\n"
+        return f"Input sql:\n{sql}\nThe error information is:\n" + str(error) + "\nPlease correct it based on previous context and output the thinking process with only one sql query in ```sql\n-- Description: \n``` format. Don't just analyze without SQL or output several SQLs.\n"
 
     # def get_beaver_one_shot_example(self):
     #     """

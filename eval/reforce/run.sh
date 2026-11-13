@@ -4,30 +4,50 @@ set -e
 # ============================================================================
 # ReFoRCE Evaluation Pipeline for Beaver
 # Usage: ./run.sh --model gpt-5-mini --dataset dw --setting 0
+# Resume/redo an existing run: add --timestamp <YYYYMMDD-HHMMSS> [--from-step 2]
 # ============================================================================
 
 # --- Argument Parsing ---
 MODEL="gpt-5.2"
 DATASET="dw"
 SETTING=0
+TIMESTAMP=""
+FROM_STEP=1
+NUM_WORKERS=16
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --model)   MODEL="$2";   shift 2 ;;
-        --dataset) DATASET="$2"; shift 2 ;;
-        --setting) SETTING="$2"; shift 2 ;;
+        --model)     MODEL="$2";     shift 2 ;;
+        --dataset)   DATASET="$2";   shift 2 ;;
+        --setting)   SETTING="$2";   shift 2 ;;
+        --timestamp) TIMESTAMP="$2"; shift 2 ;;
+        --from-step) FROM_STEP="$2"; shift 2 ;;
+        --workers)   NUM_WORKERS="$2"; shift 2 ;;
         --help|-h)
-            echo "Usage: ./run.sh --model <model> --dataset <dataset> --setting <0|1|2>"
+            echo "Usage: ./run.sh --model <model> --dataset <dataset> --setting <0|1|2> [--workers <n>] [--timestamp <ts>] [--from-step <1|2>]"
             echo ""
             echo "Arguments:"
-            echo "  --model    LLM model name (default: gpt-5.2)"
-            echo "  --dataset  Dataset split name, e.g. dw, sp, nova, neutron (default: dw)"
-            echo "  --setting  Hint setting: 0=ETE, 1=schema hints, 2=all hints (default: 0)"
+            echo "  --model      LLM model name (default: gpt-5.2)"
+            echo "  --dataset    Dataset split name, e.g. dw, sp, nova, neutron (default: dw)"
+            echo "  --setting    Hint setting: 0=ETE, 1=schema hints, 2=all hints (default: 0)"
+            echo "  --timestamp  Reuse the run folder with this timestamp (default: new timestamp)"
+            echo "  --workers    Questions processed in parallel, each running 8 votes (default: 16); lower it for rate-limited endpoints"
+            echo "  --from-step  1 = full pipeline (default); 2 = skip Step 1 and run Steps 2-4 on an existing run"
             exit 0
             ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
+
+if [[ "${FROM_STEP}" != "1" && "${FROM_STEP}" != "2" ]]; then
+    echo "--from-step must be 1 or 2"; exit 1
+fi
+if [[ "${FROM_STEP}" == "2" && -z "${TIMESTAMP}" ]]; then
+    echo "--from-step 2 needs --timestamp of the existing run"; exit 1
+fi
+if [[ ! "${NUM_WORKERS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--workers must be a positive integer"; exit 1
+fi
 
 # Map setting to internal option number (Python scripts use 1/2/3)
 OPTION=$((SETTING + 1))
@@ -41,11 +61,15 @@ if [ -f "${SCRIPT_DIR}/../../.env" ]; then
 fi
 
 # --- Derived Variables ---
-TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
-OUTPUT_PATH="output/${MODEL}-beaver-${DATASET}-setting${SETTING}-log-${TIMESTAMP}"
-GOLD_RESULT_PATH="output/${MODEL}-beaver-${DATASET}-setting${SETTING}-gold-${TIMESTAMP}"
+TIMESTAMP="${TIMESTAMP:-$(date +"%Y%m%d-%H%M%S")}"
+MODEL_TAG="${MODEL//\//_}"
+OUTPUT_PATH="output/${MODEL_TAG}-beaver-${DATASET}-setting${SETTING}-log-${TIMESTAMP}"
+GOLD_RESULT_PATH="output/${MODEL_TAG}-beaver-${DATASET}-setting${SETTING}-gold-${TIMESTAMP}"
+
+if [[ "${FROM_STEP}" == "2" && ! -d "${OUTPUT_PATH}" ]]; then
+    echo "--from-step 2: run folder not found: ${OUTPUT_PATH}"; exit 1
+fi
 NUM_VOTES=8
-NUM_WORKERS=16
 
 # Export DB name for sql.py env-var fallback
 DB_NAME="${DATASET}"
@@ -76,8 +100,11 @@ echo "Data: $DATA_FILE"
 echo "Output Path: $OUTPUT_PATH"
 echo "Gold Result Path: $GOLD_RESULT_PATH"
 echo "Num Votes: $NUM_VOTES"
+echo "Num Workers: $NUM_WORKERS"
+echo "Starting from step: $FROM_STEP"
 echo "================================"
 
+if [[ "${FROM_STEP}" == "1" ]]; then
 # Step 1: Self-refinement + Majority Voting
 echo ""
 echo "Step 1: Self-refinement + Majority Voting"
@@ -105,6 +132,7 @@ python evaluate_beaver.py \
     --output_dir $OUTPUT_PATH \
     --gold_result_dir $GOLD_RESULT_PATH \
     --dataset $DATASET
+fi
 
 # Step 2: Column Exploration + Rerun
 echo ""

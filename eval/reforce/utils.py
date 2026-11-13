@@ -70,9 +70,26 @@ def initialize_logger(log_path, logger_name=None):
     )
     file_handler.setFormatter(formatter)
 
-    logger.handlers.clear()
+    # Close any existing handlers before replacing them to avoid leaking file descriptors
+    for handler in logger.handlers[:]:
+        try:
+            handler.close()
+        except Exception:
+            pass
+        logger.removeHandler(handler)
     logger.addHandler(file_handler)
     return logger
+
+def close_logger(logger):
+    """Close and detach all handlers of a logger to release file descriptors."""
+    if logger is None:
+        return
+    for handler in logger.handlers[:]:
+        try:
+            handler.close()
+        except Exception:
+            pass
+        logger.removeHandler(handler)
 
 def extract_between(file_path, start_str, end_str):
     with open(file_path, 'r', encoding='utf-8') as file:
