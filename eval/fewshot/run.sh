@@ -79,7 +79,8 @@ echo "Step 2: Unify Predictions"
 echo "=============================="
 GOLD_FILE="${DATA_DIR}/${DATASET}/dev_sampled.json"
 
-python unify.py \
+python ../utils/unify.py \
+    --baseline fewshot \
     --input_dir "$OUTPUT_DIR" \
     --gold_file "$GOLD_FILE" \
     --dataset "$DATASET"

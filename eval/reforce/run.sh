@@ -220,7 +220,8 @@ echo "Gold results saved to: $GOLD_RESULT_PATH"
 echo ""
 echo "Step 5: Unifying generated SQLs..."
 echo "========================================"
-python unify.py \
+python ../utils/unify.py \
+    --baseline reforce \
     --input_dir $OUTPUT_PATH \
     --gold_file $DATA_FILE \
     --dataset $DATASET

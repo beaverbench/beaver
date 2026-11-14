@@ -1,26 +1,28 @@
 import os
-import sys
 import json
 import argparse
 import glob
 import re
 from tqdm import tqdm
 
-# Add the eval directory to path
+# Shared by every method's run.sh: copies each run's final SQL plus gold SQL into
+# unified-output/<baseline>/<run_name>/{generated,gold}/<id>.sql for evaluation.
+
 eval_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.append(eval_dir)
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", type=str, required=True, help="Directory containing generated outputs")
     parser.add_argument("--gold_file", type=str, required=True, help="Path to dev.json or dev_sampled.json")
     parser.add_argument("--dataset", type=str, required=True, help="Dataset name, e.g. dw")
+    parser.add_argument("--baseline", type=str, required=True, help="Method name, e.g. reforce; the unified-output subfolder")
+    parser.add_argument("--run_name", type=str, default=None, help="Unified run folder name (default: basename of --input_dir)")
     args = parser.parse_args()
     
     args.input_dir = args.input_dir.rstrip('/')
-    run_name = os.path.basename(args.input_dir)
+    run_name = args.run_name or os.path.basename(args.input_dir)
     
-    baseline_name = os.path.basename(os.path.dirname(os.path.abspath(__file__)))
+    baseline_name = args.baseline
     unified_dir = os.path.join(eval_dir, "unified-output", baseline_name, run_name)
     generated_dir = os.path.join(unified_dir, "generated")
     gold_dir = os.path.join(unified_dir, "gold")

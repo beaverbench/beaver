@@ -190,6 +190,8 @@ eval/dailsql/dailsql
 eval/fewshot/output
 eval/fewshot/fewshot
 
+eval/xiyansql/output
+
 eval/unified-output/
 eval/beaver-eval
 
