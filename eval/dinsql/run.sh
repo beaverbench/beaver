@@ -102,7 +102,8 @@ echo ""
 echo "[Step 3/3] Unifying generated SQLs..."
 echo "------------------------------------------------------------------------"
 
-python3 unify.py \
+python3 ../utils/unify.py \
+    --baseline dinsql \
     --input_dir $OUTPUT_PATH \
     --gold_file "../../data/${DATASET}/dev_sampled.json" \
     --dataset ${DATASET}

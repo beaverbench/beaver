@@ -29,6 +29,7 @@ If you find our data, code, or the paper helpful, please cite the paper:
 │   ├── fewshot/                         # Few-shot evaluation pipeline
 │   ├── dailsql/                         # DAIL-SQL evaluation pipeline
 │   ├── dinsql/                          # DIN-SQL evaluation pipeline
+│   ├── xiyansql/                        # XiYan-SQL evaluation pipeline
 │   ├── evaluate_ex_acc.py               # Script for computing execution accuracy
 │   └── evaluate_subtasks.py             # Script for subtask evaluation
 └── retrieve/                            # Table retrieval
@@ -51,12 +52,12 @@ MYSQL_HOST=localhost
 MYSQL_USER=root
 MYSQL_PASSWORD=xxx
 
-# Optional (ReFoRCE only): if LLM_BASE_URL is set, ReFoRCE sends ALL requests to this
+# Optional for ReFoRCE, required for XiYan-SQL: if LLM_BASE_URL is set, ReFoRCE sends ALL requests to this
 # OpenAI-compatible endpoint (e.g., vLLM) and ignores OPENAI_API_KEY / OPENROUTER_API_KEY.
 # Always set LLM_API_KEY (any placeholder if the endpoint needs none).
 LLM_BASE_URL=xxx
 LLM_API_KEY=xxx
-LLM_RPM=30   # cap on requests per minute, for rate-limited endpoints
+LLM_RPM=30   # (ReFoRCE only) cap on requests per minute, for rate-limited endpoints
 ```
 
 ### Data Pre-processing
@@ -92,11 +93,12 @@ Note: the retrieval step outputs `retrieved_tables.json`, and the reranking step
 
 ## Text-to-SQL methods
 
-We consider four text-to-SQL methods:
+We consider five text-to-SQL methods:
 1. ReFoRCE (adapted from [this official ReFoRCE implementation](https://github.com/Snowflake-Labs/ReFoRCE/tree/o3/methods/ReFoRCE)): an agentic method with candidate generation, majority voting, and column exploration.
 2. DIN-SQL (adapted from [this Spider2 implementation](https://github.com/xlang-ai/Spider2/tree/main/spider2-lite/baselines/dinsql)): a method with query decomposition and self-correction
 3. DAIL-SQL (adapted from [this Spider2 implementation](https://github.com/xlang-ai/Spider2/tree/main/spider2-lite/baselines/dailsql)): a method with example selection
 4. Few-shot: a method with static in-context examples
+5. XiYan-SQL (using [XiYanSQL-QwenCoder-32B-2504](https://github.com/XGenerationLab/XiYanSQL-QwenCoder)): a fine-tuned text-to-SQL model
 
 ### Environment
 
@@ -133,12 +135,20 @@ cd eval/[method]
 - `setting=1`: With hints for three schema-linking subtasks. Includes gold tables, column mapping, and join keys.
 - `setting=2`: With hints for all five subtasks. Includes three subtasks in `setting=1`, domain knowledge, and subquery decomposition.
 
-ReFoRCE also accepts two optional arguments:
+XiYan-SQL requires a vLLM server hosting the model; set `LLM_BASE_URL` in `.env` to its `/v1` endpoint (e.g., `http://localhost:8000/v1`):
 ```bash
-cd eval/reforce
+vllm serve XGenerationLab/XiYanSQL-QwenCoder-32B-2504 \
+  --served-model-name xiyansql-32b-2504 \
+  --tensor-parallel-size 1 --dtype bfloat16 --max-model-len 32768 \
+  --gpu-memory-utilization 0.95 --port 8000
+```
+For XiYan-SQL, `model` is the vLLM `--served-model-name` (e.g., `xiyansql-32b-2504`).
+
+ReFoRCE and XiYan-SQL also accept two optional arguments:
+```bash
 ./run.sh --model [model] --dataset [dataset] --setting {0,1,2} --workers [workers] --timestamp [timestamp]
 ```
-- `workers`: number of questions processed in parallel, each running 8 votes (default `16`). Lower it if you hit rate limits.
+- `workers`: number of questions processed in parallel (default `16`); each ReFoRCE question runs 8 votes. Lower it if you hit rate limits.
 - `timestamp`: resume an interrupted run by reusing its output folder (the `YYYYMMDD-HHMMSS` suffix of `output/...-log-[timestamp]`).
 
 ## Evaluation

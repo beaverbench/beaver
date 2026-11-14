@@ -104,7 +104,8 @@ python postprocessed_data/beaver_postprocess.py \
 # Step 5: Unify results
 echo ""
 echo "Step 5: Unifying generated SQLs..."
-python unify.py \
+python ../utils/unify.py \
+    --baseline dailsql \
     --input_dir postprocessed_data/${COMMENT}_${DEV}_CTX-200/RESULTS_MODEL-${MODEL}-SQL \
     --run_name $RUN_NAME \
     --gold_file ../../data/${DATASET}/dev_sampled.json \
