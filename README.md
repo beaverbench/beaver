@@ -124,25 +124,25 @@ python -m spacy download en_core_web_sm
 
 ### SQL generation
 
+Before running XiYan-SQL, start a vLLM server hosting the model and set `LLM_BASE_URL` in `.env` to its `/v1` endpoint (e.g., `http://localhost:8000/v1`):
+```bash
+vllm serve XGenerationLab/XiYanSQL-QwenCoder-32B-2504 \
+  --served-model-name xiyansql-32b-2504 \
+  --tensor-parallel-size [num_gpus] --dtype bfloat16 --max-model-len 32768 \
+  --gpu-memory-utilization 0.95 --port 8000
+```
+- `num_gpus`: GPUs to split the model across (1, 2, 4 or 8); one 80GB GPU is enough.
+
 All methods can be executed using the `run.sh` script in their respective folders.
 ```bash
 cd eval/[method]
 ./run.sh --model [model] --dataset [dataset] --setting {0,1,2}
 ```
-- `model`: the LLM for SQL generation (e.g., `gpt-5-mini`)
+- `model`: the LLM for SQL generation (e.g., `gpt-5-mini`); for XiYan-SQL, the vLLM `--served-model-name` (e.g., `xiyansql-32b-2504`)
 - `dataset`: one of `dw`, `dw_real`, `neutron`, `nova`
 - `setting=0` *(default setting)*: Standard end-to-end setting with no hints. Base information with only the top-k tables retrieved from [table retrieval](#table-retrieval).
 - `setting=1`: With hints for three schema-linking subtasks. Includes gold tables, column mapping, and join keys.
 - `setting=2`: With hints for all five subtasks. Includes three subtasks in `setting=1`, domain knowledge, and subquery decomposition.
-
-XiYan-SQL requires a vLLM server hosting the model; set `LLM_BASE_URL` in `.env` to its `/v1` endpoint (e.g., `http://localhost:8000/v1`):
-```bash
-vllm serve XGenerationLab/XiYanSQL-QwenCoder-32B-2504 \
-  --served-model-name xiyansql-32b-2504 \
-  --tensor-parallel-size 1 --dtype bfloat16 --max-model-len 32768 \
-  --gpu-memory-utilization 0.95 --port 8000
-```
-For XiYan-SQL, `model` is the vLLM `--served-model-name` (e.g., `xiyansql-32b-2504`).
 
 ReFoRCE and XiYan-SQL also accept two optional arguments:
 ```bash

@@ -60,10 +60,11 @@ def _field_line(name, field_type, examples, example_num=3):
     raw_type = field_type.split("(")[0].upper()
     line = f"({name}:{raw_type}"
 
-    # M-Schema samples DISTINCT values; example_columns can repeat values and uses NaN for NULL
+    # M-Schema samples DISTINCT values; example_columns can repeat values and uses NaN for NULL.
+    # MySQL SET values arrive as lists; join them the way MySQL returns them ('A,B').
     examples = [v for v in examples if v is not None and not (isinstance(v, float) and math.isnan(v))]
-    examples = list(dict.fromkeys(examples))
-    examples = _examples_to_str(examples)[:example_num]
+    examples = [",".join(map(str, v)) if isinstance(v, list) else v for v in examples]
+    examples = list(dict.fromkeys(_examples_to_str(examples)))[:example_num]
     if raw_type in ['DATE', 'TIME', 'DATETIME', 'TIMESTAMP']:
         examples = examples[:1]
     elif examples and max(len(s) for s in examples) > 20:
