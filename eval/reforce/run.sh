@@ -111,6 +111,7 @@ echo "Step 1: Self-refinement + Majority Voting"
 echo "=========================================="
 
 python run.py \
+    --stage 1 \
     --task beaver \
     --output_path $OUTPUT_PATH \
     --omnisql_format_pth $DATA_FILE \
@@ -139,6 +140,7 @@ echo ""
 echo "Step 2: Column Exploration + Rerun"
 echo "===================================="
 python run.py \
+    --stage 2 \
     --task beaver \
     --output_path $OUTPUT_PATH \
     --omnisql_format_pth $DATA_FILE \
@@ -170,6 +172,7 @@ echo ""
 echo "Step 3: Random Vote for Tie"
 echo "=============================="
 python run.py \
+    --stage 3 \
     --task beaver \
     --output_path $OUTPUT_PATH \
     --omnisql_format_pth $DATA_FILE \
@@ -192,6 +195,7 @@ echo ""
 echo "Step 4: Final Vote"
 echo "==================="
 python run.py \
+    --stage 4 \
     --task beaver \
     --output_path $OUTPUT_PATH \
     --omnisql_format_pth $DATA_FILE \

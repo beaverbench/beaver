@@ -9,24 +9,35 @@
 MODEL="gpt-5.2"
 DATASET="dw"
 SETTING=0
+TIMESTAMP=""
+NUM_WORKERS=16
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --model)   MODEL="$2";   shift 2 ;;
         --dataset) DATASET="$2"; shift 2 ;;
         --setting) SETTING="$2"; shift 2 ;;
+        --workers)   NUM_WORKERS="$2"; shift 2 ;;
+        --timestamp) TIMESTAMP="$2"; shift 2 ;;
         --help|-h)
-            echo "Usage: ./run.sh --model <model> --dataset <dataset> --setting <0|1|2>"
+            echo "Usage: ./run.sh --model <model> --dataset <dataset> --setting <0|1|2> [--workers <n>] [--timestamp <ts>]"
             echo ""
             echo "Arguments:"
             echo "  --model    LLM model name (default: gpt-5.2)"
             echo "  --dataset  Dataset split name, e.g. dw, sp, nova, neutron (default: dw)"
             echo "  --setting  Hint setting: 0=ETE, 1=schema hints, 2=all hints (default: 0)"
+            echo "  --workers    Questions processed in parallel (processes) (default: 16)"
+            echo "  --timestamp  Resume an existing run folder ...-log-<timestamp>"
             exit 0
             ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
+
+if [[ ! "${NUM_WORKERS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--workers must be a positive integer"; exit 1
+fi
+MODEL_TAG="${MODEL//\//_}"
 
 # Map setting to internal option number (Python scripts use 1/2/3)
 OPTION=$((SETTING + 1))
@@ -40,8 +51,8 @@ if [ -f "${script_dir}/../../.env" ]; then
 fi
 
 # --- Check API keys ---
-if [ -z "$OPENAI_API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ] && [ -z "$GOOGLE_API_KEY" ]; then
-    echo "Error: No LLM API key found. Set OPENAI_API_KEY, OPENROUTER_API_KEY, or GOOGLE_API_KEY in eval/.env"
+if [ -z "$OPENAI_API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ] && [ -z "$GOOGLE_API_KEY" ] && [ -z "$LLM_BASE_URL" ]; then
+    echo "Error: No LLM API key found. Set OPENAI_API_KEY, OPENROUTER_API_KEY, GOOGLE_API_KEY, or LLM_BASE_URL in .env"
     exit 1
 fi
 
@@ -53,8 +64,10 @@ COMMENT="beaver_${DATASET}_opt${OPTION}"
 BEAVER_QUESTIONS="../../data/${DATASET}/dev_sampled.json"
 BEAVER_TABLES="../../data/${DATASET}/dev_tables.json"
 
-TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
-RUN_NAME="${MODEL}-beaver-${DATASET}-setting${SETTING}-log-${TIMESTAMP}"
+TIMESTAMP="${TIMESTAMP:-$(date +"%Y%m%d-%H%M%S")}"
+RUN_NAME="${MODEL_TAG}-beaver-${DATASET}-setting${SETTING}-log-${TIMESTAMP}"
+# One results folder per run (earlier runs of the same model, dataset and setting used to share one)
+RESULTS_DIR="postprocessed_data/${COMMENT}_${DEV}_CTX-200/RESULTS_MODEL-${RUN_NAME}-SQL"
 
 echo "========================================"
 echo "Running DAILSQL on ${DATASET} - Setting ${SETTING} (option ${OPTION})"
@@ -84,7 +97,8 @@ python generate_question.py --dev ${DEV} --model ${MODEL} --tokenizer ${MODEL} -
 # Step 3: Query LLM
 echo ""
 echo "Step 3: Querying LLM to generate SQL..."
-python ask_llm.py --model ${MODEL} --n 1 --question postprocessed_data/${COMMENT}_${DEV}_CTX-200
+python ask_llm.py --model ${MODEL} --n 1 --question postprocessed_data/${COMMENT}_${DEV}_CTX-200 \
+    --results_dir ${RESULTS_DIR} --processes ${NUM_WORKERS}
 
 # Step 4: Postprocess results and execute on MySQL
 echo ""
@@ -99,14 +113,15 @@ python postprocessed_data/beaver_postprocess.py \
     --comment ${COMMENT} \
     --dev_file ${DEV_FILE} \
     --dev ${DEV} \
-    --tables_file ${TABLES_FILE}
+    --tables_file ${TABLES_FILE} \
+    --results_dir ${RESULTS_DIR}
 
 # Step 5: Unify results
 echo ""
 echo "Step 5: Unifying generated SQLs..."
 python ../utils/unify.py \
     --baseline dailsql \
-    --input_dir postprocessed_data/${COMMENT}_${DEV}_CTX-200/RESULTS_MODEL-${MODEL}-SQL \
+    --input_dir ${RESULTS_DIR} \
     --run_name $RUN_NAME \
     --gold_file ../../data/${DATASET}/dev_sampled.json \
     --dataset ${DATASET}

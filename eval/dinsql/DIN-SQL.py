@@ -3,9 +3,13 @@ import pandas as pd
 import time
 import pandas as pd
 import time
-from openai import OpenAI
 import os
 import sys
+
+# eval/utils is appended, not prepended, so it cannot shadow other modules
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "utils"))
+import cost
+import llm_client
 from tqdm import tqdm
 import json
 from multiprocessing import Pool, set_start_method
@@ -490,21 +494,16 @@ if __name__ == "__main__":
 
 CLIENT = None
 
+
+# Step label of the calls being made, for the cost breakdown
+CALL_STEP = "generation"
+
+
 def init_client(model):
     global CLIENT
     if CLIENT is None:
-        if "gemini" in model:
-            CLIENT = OpenAI(
-                api_key=os.environ.get("GEMINI_API_KEY"),
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
-            )
-        elif "/" in model:
-            CLIENT = OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=os.environ.get("OPENROUTER_API_KEY")
-            )
-        else:
-            CLIENT = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        # LLM_BASE_URL, else Gemini / OpenRouter ("/" in the name) / OpenAI; requests are paced and their usage recorded
+        CLIENT = llm_client.LLMClient(llm_client.make_client(model), step=lambda: CALL_STEP)
 
 
 
@@ -781,7 +780,8 @@ def debuger(test_sample_text, db_names, sql, spider_schema, spider_primary, spid
 
 def GPT4o_generation(prompt, n=1, temperature=0, model="gpt-4.1"):
   init_client(model)
-  global CLIENT
+  global CLIENT, CALL_STEP
+  CALL_STEP = "generation"
   try:
     # print(f"model: {model}")
     if "gemini" in model:
@@ -829,11 +829,8 @@ def GPT4o_generation(prompt, n=1, temperature=0, model="gpt-4.1"):
                 temperature=temperature,
                 max_tokens=1000,
                 # stop = ["Q:"],
-                extra_body={
-                    "reasoning": {
-                        "effort": "none",
-                    }
-                },
+                # OpenRouter-only parameter; a custom endpoint (LLM_BASE_URL) gets none
+                **({} if llm_client.custom_endpoint() else {"extra_body": {"reasoning": {"effort": "none"}}}),
             )
     elif "gpt-5" in model or "o4-mini" in model:
          response = CLIENT.chat.completions.create(
@@ -874,7 +871,8 @@ def GPT4o_generation(prompt, n=1, temperature=0, model="gpt-4.1"):
 
 def GPT4o_debug(prompt, n=1, temperature=0, model="gpt-4.1"):
   init_client(model)
-  global CLIENT
+  global CLIENT, CALL_STEP
+  CALL_STEP = "debug"
   try:  
     if "gemini" in model:
         try:
@@ -918,11 +916,8 @@ def GPT4o_debug(prompt, n=1, temperature=0, model="gpt-4.1"):
                 temperature=temperature,
                 # max_tokens=1000,
                 # stop = ["#", ";","\n\n"],
-                extra_body={
-                    "reasoning": {
-                        "effort": "none",
-                    }
-                },
+                # OpenRouter-only parameter; a custom endpoint (LLM_BASE_URL) gets none
+                **({} if llm_client.custom_endpoint() else {"extra_body": {"reasoning": {"effort": "none"}}}),
             )   
     elif "gpt-5" in model or "o4-mini" in model:
         response = CLIENT.chat.completions.create(

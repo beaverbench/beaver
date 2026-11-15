@@ -6,9 +6,11 @@ from agent import REFORCE
 from chat import GPTChat
 from prompt import Prompts
 import threading, concurrent
+import contextvars
 from sql import SqlEnv
 import time
 import json
+from chat import cost  # eval/utils/cost.py, made importable by chat.py
 
 def execute(question, table_info, args, csv_save_path, log_save_path, sql_save_path, search_directory, format_csv, sql_data):
     db_id = None
@@ -51,6 +53,7 @@ def execute(question, table_info, args, csv_save_path, log_save_path, sql_save_p
         # chat
         if args.do_column_exploration:
             chat_session_ex = ChatClass(args.azure, args.column_exploration_model, temperature=args.temperature)
+            chat_session_ex.cost_step = "column_exploration"
         if args.generation_model:
             chat_session = ChatClass(args.azure, args.generation_model, temperature=args.temperature)
 
@@ -96,8 +99,25 @@ def main(args):
         list(executor.map(process_sql_data, dictionaries))
 
     print("Finished")
+    cost.write_summary(args.output_path)
 
 def process_sql_data(sql_data):
+    """
+    Runs _process_sql_data with a cost recorder for the question (eval/utils/cost.py). run.sh processes a
+    question over several run.py stages, so each stage's calls are tagged with --stage and appended to its cost.json.
+    """
+    recorder = cost.start_recording()
+    try:
+        _process_sql_data(sql_data)
+    finally:
+        if recorder.calls:
+            for entry in recorder.calls:
+                entry["stage"] = args.stage
+            search_directory = os.path.join(args.output_path, sql_data)
+            os.makedirs(search_directory, exist_ok=True)
+            recorder.write(os.path.join(search_directory, "cost.json"), append=True)
+
+def _process_sql_data(sql_data):
     start_time = time.time()
 
     print(sql_data)
@@ -171,6 +191,7 @@ def process_sql_data(sql_data):
         else:
             # Initialize sessions at the beginning of each thread
             chat_session_format = ChatClass(args.azure, args.format_model, temperature=args.temperature)
+            chat_session_format.cost_step = "format"
             # Format answer and update the pre-chat session
             format_csv = agent_format.format_answer(question, chat_session_format)
     else:
@@ -191,9 +212,11 @@ def process_sql_data(sql_data):
             #         csv_save_pathi, log_pathi, sql_save_pathi,
             #         search_directory, format_csv, sql_data
             # )
+            # The vote thread runs in a copy of this context, so its calls reach the question's cost recorder
             thread = threading.Thread(
-                target=execute,
+                target=contextvars.copy_context().run,
                 args=(
+                    execute,
                     question, table_info, args,
                     csv_save_pathi, log_pathi, sql_save_pathi,
                     search_directory, format_csv, sql_data
@@ -272,6 +295,7 @@ if __name__ == '__main__':
     parser.add_argument('--omnisql_format_pth', type=str, default=None)
     parser.add_argument('--option', type=int, default=None, help="Preprocessing option (1-5)")
     parser.add_argument('--gold_result_path', type=str, default=None)
+    parser.add_argument('--stage', type=int, default=None, help="run.sh stage (1-4), recorded with each call in cost.json")
     args = parser.parse_args()
 
     if args.gold_result_path is None:

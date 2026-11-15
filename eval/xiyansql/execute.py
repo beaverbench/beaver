@@ -1,16 +1,14 @@
 import os
-import time
 import argparse
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from openai import OpenAI, APIConnectionError, APITimeoutError, InternalServerError
 
 from prompt import get_ete_prompts, EvalConfig
+from utils import cost, llm_client  # eval/ is on sys.path via prompt
 
 # Sampling from the official XiYanSQL-QwenCoder vLLM example
 TEMPERATURE = 0.1
 MAX_TOKENS = 1024
-MAX_RETRIES = 3
 
 
 def process_output(output):
@@ -39,37 +37,36 @@ def run_prompts(prompts, instance_ids, output_dir: str, model: str, num_workers:
     base_url = os.environ.get("LLM_BASE_URL")
     if not base_url:
         raise SystemExit("LLM_BASE_URL is not set; point it at the vLLM server, e.g. http://localhost:8000/v1")
-    client = OpenAI(base_url=base_url, api_key=os.environ.get("LLM_API_KEY") or "EMPTY", max_retries=0)
+    # Paced by LLM_RPM, waits out rate limits, retries transient errors, and records usage (eval/utils/llm_client.py)
+    client = llm_client.LLMClient(llm_client.make_client(model), step="generate")
 
     def process_prompt(item):
         prompt, instance_id = item
-        for attempt in range(MAX_RETRIES):
-            try:
-                resp = client.chat.completions.create(
-                    model=model,
-                    messages=prompt,
-                    temperature=TEMPERATURE,
-                    max_tokens=MAX_TOKENS,
-                )
-                content = resp.choices[0].message.content or ""
-                return instance_id, content, f"Prompt:\n{prompt[0]['content']}\n\nResponse:\n{content}"
-            except (APIConnectionError, APITimeoutError, InternalServerError) as e:
-                print(f"Transient error on {instance_id} (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
-                time.sleep(5 * 2 ** attempt)
-            except Exception as e:
-                # e.g. 400 when the prompt exceeds --max-model-len; not worth retrying
-                print(f"Error processing {instance_id}: {e}")
-                return instance_id, "", f"Prompt:\n{prompt[0]['content']}\n\nError: {e}"
-        return instance_id, "", f"Prompt:\n{prompt[0]['content']}\n\nError: retries exhausted"
+        recorder = cost.start_recording()
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=prompt,
+                temperature=TEMPERATURE,
+                max_tokens=MAX_TOKENS,
+            )
+            content = resp.choices[0].message.content or ""
+            gen_log = f"Prompt:\n{prompt[0]['content']}\n\nResponse:\n{content}"
+        except Exception as e:
+            # e.g. 400 when the prompt exceeds --max-model-len; not worth retrying
+            print(f"Error processing {instance_id}: {e}")
+            content, gen_log = "", f"Prompt:\n{prompt[0]['content']}\n\nError: {e}"
+        return instance_id, content, gen_log, recorder
 
     def save(result):
-        instance_id, content, gen_log = result
+        instance_id, content, gen_log, recorder = result
         instance_dir = os.path.join(output_dir, instance_id)
         os.makedirs(instance_dir, exist_ok=True)
         with open(os.path.join(instance_dir, "predicted_0.sql"), "w") as f:
             f.write(process_output(content))
         with open(os.path.join(instance_dir, "generation.log"), "w") as f:
             f.write(gen_log)
+        recorder.write(os.path.join(instance_dir, "cost.json"))
         return content != ""
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -109,3 +106,4 @@ if __name__ == "__main__":
     os.makedirs(args.output_dir, exist_ok=True)
 
     run_prompts(prompts, instance_ids, args.output_dir, args.model, args.num_workers)
+    cost.write_summary(args.output_dir)

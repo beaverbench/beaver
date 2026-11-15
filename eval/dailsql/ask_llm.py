@@ -2,14 +2,13 @@
 import argparse
 import os
 import json
-import tiktoken
 import openai
 import logging
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from multiprocessing import Pool, set_start_method
 
-from llm.chatgpt import init_chatgpt, ask_llm
+from llm.chatgpt import init_chatgpt, ask_llm, cost, llm_client
 from utils.enums import LLM
 from utils.post_process import process_duplication, get_sqls
 
@@ -35,22 +34,8 @@ def process_batch(batch, submit_folder, db_ids, args, i,
     logger.info(f"Processing question: {instance_id}")
     logger.info("="*80)
 
-    # cost recorded
-    os.makedirs(os.path.join(submit_folder, "../cost"), exist_ok=True)
-    with open(os.path.join(submit_folder, "../cost", f"{batch['instance_id'][0]}.json"), "w") as submit_file:
-        prompt = batch["prompt"][0]
-        prompt_tokens = len(tiktoken.get_encoding("cl100k_base").encode(prompt))
-        logger.info(f"[Prompt Tokens]: {prompt_tokens}")
-        logger.info(f"[Input Prompt]\n{prompt}\n[End Input Prompt]")
-        json.dump(
-            {
-                "prompt": prompt,
-                "prompt_tokens": prompt_tokens, 
-                "cost": prompt_tokens * 5e-6  # USD
-            },
-            submit_file)
-
-    # return  # count cost only
+    prompt = batch["prompt"][0]
+    logger.info(f"[Input Prompt]\n{prompt}\n[End Input Prompt]")
 
     # init openai api
     init_chatgpt(args.openai_api_key, args.openai_group_id, args.model)
@@ -77,6 +62,8 @@ def process_batch(batch, submit_folder, db_ids, args, i,
                 submit_file.write(final_sql)
         return
 
+    # Token usage of the LLM call (eval/utils/cost.py); a rerun replaces cost.json
+    recorder = cost.start_recording()
     try:
         logger.info("[Requesting LLM Response]")
         res = ask_llm(args.model, batch["prompt"], args.temperature, args.n, args.max_tokens)
@@ -85,6 +72,8 @@ def process_batch(batch, submit_folder, db_ids, args, i,
         logger.error(f"The {i}-th question has too much tokens! Return \"SELECT\" instead")
         print(f"The {i}-th question has too much tokens! Return \"SELECT\" instead")
         res = {"response": [["SELECT" for _ in range(args.n)]]}  # hard-code for batch_size=1
+    finally:
+        recorder.write(os.path.join(instance_dir, "cost.json"))
 
     if args.n == 1: 
         assert len(res["response"]) == args.batch_size == 1
@@ -134,6 +123,7 @@ def process_batch(batch, submit_folder, db_ids, args, i,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--question", type=str)
+    parser.add_argument("--results_dir", type=str, default=None, help="Folder for this run's results (default: <question>/RESULTS_MODEL-<model>-SQL)")
     parser.add_argument("--openai_api_key", type=str)
     parser.add_argument("--openai_group_id", type=str, default=None)
     parser.add_argument("--model", type=str, default=LLM.GPT_35_TURBO)
@@ -162,7 +152,7 @@ if __name__ == '__main__':
 
     # load ids that already predicted
     DEBUG_PREFIX = "SQL_DEBUG_" if args.is_sql_debug else ""
-    submit_folder = os.path.join(args.question, f'{DEBUG_PREFIX}RESULTS_MODEL-{args.model}-SQL')
+    submit_folder = args.results_dir or os.path.join(args.question, f'{DEBUG_PREFIX}RESULTS_MODEL-{args.model}-SQL')
     os.makedirs(submit_folder, exist_ok=True)
 
     if args.override:
@@ -181,6 +171,8 @@ if __name__ == '__main__':
     set_start_method('spawn', force=True)  # Ensures that the correct start method is used for multiprocessing
 
     token_cnt = 0
+    # Each worker process paces its own requests
+    llm_client.split_rpm_across_processes(args.processes)
     with Pool(processes=args.processes) as pool:
         with tqdm(total=len(question_loader)) as pbar:
             for _ in pool.starmap(process_batch, [
@@ -190,3 +182,5 @@ if __name__ == '__main__':
                 ) for i, batch in enumerate(question_loader)
             ]):
                 pbar.update(1)
+
+    cost.write_summary(submit_folder)

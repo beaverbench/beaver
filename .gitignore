@@ -192,6 +192,9 @@ eval/fewshot/fewshot
 
 eval/xiyansql/output
 
+eval/chess/output
+eval/chess/preprocessed_data
+
 eval/unified-output/
 eval/beaver-eval
 

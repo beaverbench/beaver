@@ -35,6 +35,7 @@ find_foreign_keys_MYSQL_like = dinsql.find_foreign_keys_MYSQL_like
 debuger = dinsql.debuger
 GPT4o_generation = dinsql.GPT4o_generation
 GPT4o_debug = dinsql.GPT4o_debug
+cost = dinsql.cost  # eval/utils/cost.py, made importable by DIN-SQL.py
 
 
 def creating_schema_preprocessed(DATASET_JSON):
@@ -97,6 +98,9 @@ def process_single_question(index, row, args, output_base_dir, spider_schema, sp
     handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     logger.addHandler(handler)
     
+    # Token usage of this question's LLM calls; a rerun replaces its cost.json
+    recorder = cost.start_recording()
+
     logger.info("="*80)
     logger.info(f"Processing question: {question_id}")
     logger.info(f"Question text: {row['question']}")
@@ -223,6 +227,7 @@ def process_single_question(index, row, args, output_base_dir, spider_schema, sp
     except Exception as e:
         logger.error(f"Fatal error processing {question_id}: {e}", exc_info=True)
     finally:
+        recorder.write(str(question_dir / 'cost.json'))
         # Remove handler to avoid duplicates
         logger.removeHandler(handler)
         handler.close()
@@ -248,7 +253,7 @@ if __name__ == '__main__':
     DATASET_SCHEMA = f"./preprocessed_data/{args.dev}/tables_preprocessed.json"
     DATASET = f"./preprocessed_data/{args.dev}/{args.dev}_preprocessed.json"
 
-    openai.api_key = os.environ["OPENAI_API_KEY"]
+    openai.api_key = os.environ.get("OPENAI_API_KEY")
 
     set_start_method('spawn')
     s_time = time.time()
@@ -277,6 +282,8 @@ if __name__ == '__main__':
                 if qdir.is_dir() and (qdir / 'predicted_0.sql').exists():
                     pred_ids.add(qdir.name)
     
+    # Each worker process paces its own requests
+    dinsql.llm_client.split_rpm_across_processes(args.processes)
     with Pool(processes=args.processes) as pool:
         with tqdm(total=val_df.shape[0]) as pbar:
             inputs = [(index, row, args, output_dir, spider_schema, spider_primary, spider_foreign) 
@@ -287,3 +294,4 @@ if __name__ == '__main__':
 
     print(f"Total time: {time.time() - s_time} seconds")
     print(f"Output directory: {output_dir}")
+    cost.write_summary(output_dir)
