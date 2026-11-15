@@ -60,9 +60,11 @@ LLM_BASE_URL=xxx
 LLM_API_KEY=xxx
 LLM_RPM=xxx   # optional: cap on LLM requests per minute for the whole run (unset = no cap), for rate-limited endpoints
 
-# Optional for CHESS: OpenAI-compatible endpoint for embeddings (default: OpenRouter with OPENROUTER_API_KEY)
+# Optional for CHESS: OpenAI-compatible endpoint and model for embeddings (default: OpenRouter with OPENROUTER_API_KEY,
+# qwen/qwen3-embedding-8b); --embedding_model overrides EMBED_MODEL
 EMBED_BASE_URL=xxx
 EMBED_API_KEY=xxx
+EMBED_MODEL=xxx
 ```
 
 ### Data Pre-processing
@@ -152,7 +154,7 @@ cd eval/[method]
 - `workers` *(optional)*: number of questions processed in parallel (the default varies by method; see `./run.sh --help`)
 - `timestamp` *(optional)*: resume an interrupted run by reusing its output folder (the `YYYYMMDD-HHMMSS` suffix of its `...-log-[timestamp]` folder); questions already answered are skipped.
 
-CHESS also accepts `--embedding_model [embedding_model]` (default `qwen/qwen3-embedding-8b` on OpenRouter; set `EMBED_BASE_URL` to use another endpoint).
+CHESS also accepts `--embedding_model [embedding_model]` (default `EMBED_MODEL` in `.env`, else `qwen/qwen3-embedding-8b` on OpenRouter; set `EMBED_BASE_URL` to use another endpoint).
 
 ## Evaluation
 
