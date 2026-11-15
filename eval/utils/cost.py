@@ -9,7 +9,8 @@ import threading
 from typing import Any, Dict, List, Optional
 
 # Token and cost accounting shared by the baselines.
-# Every LLM or embedding call is recorded as one entry holding the raw token counts (no prices applied);
+# Every LLM or embedding call is recorded as one entry holding the raw token counts (no prices applied); an entry
+# may instead total several calls, counted by its num_calls (Claude Code reports usage per question, not per call);
 # a baseline writes a question's entries to <instance_dir>/cost.json, and unify.py copies them to
 # unified-output/<method>/<run>/cost/<id>.json. summarize() prices the chat tokens with PRICES (edit it to add or
 # change a price) and writes cost_summary.json; run this file as a script to redo that for a run, e.g. after
@@ -157,14 +158,15 @@ def _empty_totals() -> Dict[str, Any]:
 
 
 def _add(totals: Dict[str, Any], entry: Dict[str, Any], prices: Optional[Dict[str, Dict[str, float]]]) -> Optional[float]:
-    totals["calls"] += 1
+    calls = entry.get("num_calls", 1)
+    totals["calls"] += calls
     for key in ("prompt_tokens", "completion_tokens", "cache_read_tokens", "cache_write_tokens"):
         totals[key] += entry[key]
     if prices is None:
         return None
     cost = call_cost(entry, prices)
     if cost is None:
-        totals["unpriced_calls"] += 1
+        totals["unpriced_calls"] += calls
         return None
     totals["cost_usd"] += cost
     totals["cost_usd_uncached"] += call_cost(entry, prices, uncached=True)
@@ -253,7 +255,8 @@ def write_summary(run_dir: str, prices: Dict[str, Dict[str, float]] = PRICES) ->
         print(f"No price for {summary['unpriced_llm_models']}: add them to PRICES in eval/utils/cost.py; "
               f"their tokens are counted but not priced", file=sys.stderr)
     if summary["estimated_usage_calls"]:
-        print(f"{summary['estimated_usage_calls']} calls returned no usage; their tokens are tiktoken estimates", file=sys.stderr)
+        print(f"{summary['estimated_usage_calls']} calls have estimated tokens (no usage returned, or a response cut "
+              f"off by a time limit)", file=sys.stderr)
     return summary
 
 

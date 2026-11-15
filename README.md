@@ -3,7 +3,7 @@
 [![Dataset](https://img.shields.io/badge/HuggingFace-Dataset-blue?logo=huggingface)](https://huggingface.co/collections/beaverbench/beaver-dataset)
 [![Paper](https://img.shields.io/badge/arXiv-Paper-red?logo=arxiv)](https://arxiv.org/abs/2409.02038)
 
-This repository contains the evaluation code for the **BEAVER** text-to-SQL benchmark. It includes (i) six text-to-SQL methods: **ReFoRCE**, **DAIL-SQL**, **DIN-SQL**, **Few-shot**, **XiYan-SQL**, and **CHESS** (ii) three evaluation modes: **coarse-grained evaluation** (execution accuracy), **fine-grained evaluation** across five subtasks critical to text-to-SQL, and **cost** (tokens and dollars of the LLM calls).
+This repository contains the evaluation code for the **BEAVER** text-to-SQL benchmark. It includes (i) seven text-to-SQL methods: **ReFoRCE**, **DAIL-SQL**, **DIN-SQL**, **Few-shot**, **XiYan-SQL**, **CHESS**, and **Claude Code** (ii) three evaluation modes: **coarse-grained evaluation** (execution accuracy), **fine-grained evaluation** across five subtasks critical to text-to-SQL, and **cost** (tokens and dollars of the LLM calls).
 
 If you find our data, code, or the paper helpful, please cite the paper:
 ```
@@ -31,6 +31,7 @@ If you find our data, code, or the paper helpful, please cite the paper:
 │   ├── dinsql/                          # DIN-SQL evaluation pipeline
 │   ├── xiyansql/                        # XiYan-SQL evaluation pipeline
 │   ├── chess/                           # CHESS evaluation pipeline
+│   ├── claudecode/                      # Claude Code evaluation pipeline
 │   ├── evaluate_ex_acc.py               # Script for computing execution accuracy
 │   └── evaluate_subtasks.py             # Script for subtask evaluation
 └── retrieve/                            # Table retrieval
@@ -53,7 +54,7 @@ MYSQL_HOST=localhost
 MYSQL_USER=root
 MYSQL_PASSWORD=xxx
 
-# Required for XiYan-SQL, optional for the other methods: if LLM_BASE_URL is set, every method sends ALL LLM
+# Required for XiYan-SQL, optional for the other methods: if LLM_BASE_URL is set, every method but Claude Code sends ALL LLM
 # requests to this OpenAI-compatible endpoint (e.g., vLLM or a LiteLLM gateway) and ignores OPENAI_API_KEY / OPENROUTER_API_KEY.
 # Always set LLM_API_KEY (any placeholder if the endpoint needs none).
 LLM_BASE_URL=xxx
@@ -65,6 +66,14 @@ LLM_RPM=xxx   # optional: cap on LLM requests per minute for the whole run (unse
 EMBED_BASE_URL=xxx
 EMBED_API_KEY=xxx
 EMBED_MODEL=xxx
+
+# Required for Claude Code (it does not read LLM_BASE_URL / LLM_API_KEY); set only one of (a) or (b):
+# (a) the Anthropic API directly:
+ANTHROPIC_API_KEY=xxx
+# (b) or a gateway with an Anthropic-format /v1/messages endpoint (e.g., LiteLLM); the base URL leaves out the
+#     trailing /v1, and the token is the gateway key (sent as "Authorization: Bearer")
+ANTHROPIC_BASE_URL=xxx
+ANTHROPIC_AUTH_TOKEN=xxx
 ```
 
 ### Data Pre-processing
@@ -100,13 +109,14 @@ Note: the retrieval step outputs `retrieved_tables.json`, and the reranking step
 
 ## Text-to-SQL methods
 
-We consider six text-to-SQL methods:
+We consider seven text-to-SQL methods:
 1. ReFoRCE (adapted from [this official ReFoRCE implementation](https://github.com/Snowflake-Labs/ReFoRCE/tree/o3/methods/ReFoRCE)): an agentic method with candidate generation, majority voting, and column exploration.
 2. DIN-SQL (adapted from [this Spider2 implementation](https://github.com/xlang-ai/Spider2/tree/main/spider2-lite/baselines/dinsql)): a method with query decomposition and self-correction
 3. DAIL-SQL (adapted from [this Spider2 implementation](https://github.com/xlang-ai/Spider2/tree/main/spider2-lite/baselines/dailsql)): a method with example selection
 4. Few-shot: a method with static in-context examples
 5. XiYan-SQL (using [XiYanSQL-QwenCoder-32B-2504](https://github.com/XGenerationLab/XiYanSQL-QwenCoder)): a fine-tuned text-to-SQL model
 6. CHESS (adapted from [the official CHESS implementation](https://github.com/ShayanTalaei/CHESS)): a method with value retrieval, schema selection, and candidate generation with revision
+7. Claude Code (through the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python)): a coding agent with tools for read-only SQL execution
 
 ### Environment
 
