@@ -63,6 +63,10 @@ TIMESTAMP="${TIMESTAMP:-$(date +"%Y%m%d-%H%M%S")}"
 OUTPUT_DIR="${SCRIPT_DIR}/output/${MODEL_TAG}-beaver-${DATASET}-setting${SETTING}-log-${TIMESTAMP}"
 
 mkdir -p "$OUTPUT_DIR"
+# Save everything this script prints to the run folder (appended when a run is resumed); Python output
+# unbuffered so it lands in order
+export PYTHONUNBUFFERED=1
+exec > >(tee -a "${OUTPUT_DIR}/run.log") 2>&1
 
 echo "================================"
 echo "Few-Shot on Beaver ${DATASET} Dataset"

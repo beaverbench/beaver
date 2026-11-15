@@ -17,9 +17,11 @@ class FilterColumn(Tool):
     are judged in batches, one call per table (split into chunks of max_columns_per_call), with the same
     column profiles, instructions and examples; each column still gets its own reasoning and Yes/No.
     A JSON schema requiring every column is sent as structured output where the endpoint supports it;
-    columns missing from an answer are asked again once, and still-missing ones are dropped, as CHESS
-    drops a column whose call fails.
+    columns missing from an answer are asked again once (at most RETRY_COLUMNS_PER_CALL per call), and
+    still-missing ones are dropped, as CHESS drops a column whose call fails.
     """
+
+    RETRY_COLUMNS_PER_CALL = 15
 
     def __init__(self, template_name: str = None, engine_config: str = None, parser_name: str = None,
                  max_columns_per_call: int = 50):
@@ -57,14 +59,23 @@ class FilterColumn(Tool):
 
     @staticmethod
     def _decisions(response: Optional[Dict[str, Any]], column_names: List[str]) -> Dict[str, bool]:
-        """Maps the answered columns (matched case-insensitively, backticks stripped) to whether they are relevant."""
+        """
+        Maps the answered columns (matched case-insensitively, backticks stripped) to whether they are relevant.
+        Answers nested one level down are read too: through a LiteLLM gateway, Claude sometimes wraps the columns
+        in an extra key (e.g. "$PARAMETER_NAME", "json_tool_call" or one of the columns), as the structured output
+        is not enforced there.
+        """
         decisions = {}
         if not isinstance(response, dict):
             return decisions
         by_lower = {name.lower(): name for name in column_names}
-        for key, value in response.items():
+        items = list(response.items())
+        items += [item for value in response.values()
+                  if isinstance(value, dict) and "is_column_information_relevant" not in value
+                  for item in value.items()]
+        for key, value in items:
             column_name = by_lower.get(str(key).strip().strip("`").lower())
-            if column_name is None or not isinstance(value, dict):
+            if column_name is None or not isinstance(value, dict) or column_name in decisions:
                 continue
             answer = value.get("is_column_information_relevant")
             if isinstance(answer, str):
@@ -123,7 +134,11 @@ class FilterColumn(Tool):
                 missing = [c for c in column_names if c not in decisions]
                 if missing:
                     still_pending.append((table_name, missing))
-            pending = still_pending
+            # A long table's answer can stop at the output limit (~28 columns at 4096 tokens), so the columns it
+            # left out are asked in smaller chunks
+            pending = [(table_name, missing[start:start + self.RETRY_COLUMNS_PER_CALL])
+                       for table_name, missing in still_pending
+                       for start in range(0, len(missing), self.RETRY_COLUMNS_PER_CALL)]
 
         for table_name, column_names in pending:
             Logger().log(f"({state.task.db_id}, {state.task.question_id}) No column filtering answer for {table_name}: {column_names}", "error")

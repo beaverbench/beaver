@@ -68,6 +68,11 @@ TIMESTAMP="${TIMESTAMP:-$(date +"%Y%m%d-%H%M%S")}"
 RUN_NAME="${MODEL_TAG}-beaver-${DATASET}-setting${SETTING}-log-${TIMESTAMP}"
 # One results folder per run (earlier runs of the same model, dataset and setting used to share one)
 RESULTS_DIR="postprocessed_data/${COMMENT}_${DEV}_CTX-200/RESULTS_MODEL-${RUN_NAME}-SQL"
+mkdir -p "${script_dir}/${RESULTS_DIR}"
+# Save everything this script prints to the run folder (appended when a run is resumed); Python output
+# unbuffered so it lands in order
+export PYTHONUNBUFFERED=1
+exec > >(tee -a "${script_dir}/${RESULTS_DIR}/run.log") 2>&1
 
 echo "========================================"
 echo "Running DAILSQL on ${DATASET} - Setting ${SETTING} (option ${OPTION})"

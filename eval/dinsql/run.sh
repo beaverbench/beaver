@@ -65,6 +65,11 @@ BEAVER_TABLES="../../data/${DATASET}/dev_tables.json"
 
 TIMESTAMP="${TIMESTAMP:-$(date +"%Y%m%d-%H%M%S")}"
 OUTPUT_PATH="output/${MODEL_TAG}-beaver-${DATASET}-setting${SETTING}-log-${TIMESTAMP}"
+mkdir -p "${OUTPUT_PATH}"
+# Save everything this script prints to the run folder (appended when a run is resumed); Python output
+# unbuffered so it lands in order
+export PYTHONUNBUFFERED=1
+exec > >(tee -a "${OUTPUT_PATH}/run.log") 2>&1
 
 echo "========================================================================"
 echo "DINSQL on ${DATASET} - Setting ${SETTING} (option ${OPTION})"

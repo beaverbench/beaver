@@ -69,6 +69,11 @@ GOLD_RESULT_PATH="output/${MODEL_TAG}-beaver-${DATASET}-setting${SETTING}-gold-$
 if [[ "${FROM_STEP}" == "2" && ! -d "${OUTPUT_PATH}" ]]; then
     echo "--from-step 2: run folder not found: ${OUTPUT_PATH}"; exit 1
 fi
+mkdir -p "${OUTPUT_PATH}"
+# Save everything this script prints to the run folder (appended when a run is resumed); Python output
+# unbuffered so it lands in order
+export PYTHONUNBUFFERED=1
+exec > >(tee -a "${OUTPUT_PATH}/run.log") 2>&1
 NUM_VOTES=8
 
 # Export DB name for sql.py env-var fallback
