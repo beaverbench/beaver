@@ -232,6 +232,10 @@ async def run_all(todo, mysql_creds, model: str, output_dir: Path, num_workers: 
         # Claude Code's background calls use the haiku model; a gateway may serve only --model
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        # The workdir sits inside this repo (output/ is only gitignored): leave its git status (branch, commits,
+        # git user) out of the system prompt, and keep auto-memory off
+        "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS": "1",
+        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
     }
     semaphore = asyncio.Semaphore(num_workers)
 

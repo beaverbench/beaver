@@ -193,11 +193,14 @@ def summarize(run_dir: str, prices: Dict[str, Dict[str, float]] = PRICES) -> Dic
     prices twice: cost_usd as billed, with prompt-cache reads and writes (a gateway may cache prompts on its
     own, and writes cost 1.25x), and cost_usd_uncached with every input token at the input price. Embedding
     calls are counted but not priced. If any chat call's model has no price, the cost is reported as None (see
-    _finalize). The gateway-reported cost is summed for reference over the calls that have it.
+    _finalize). Chat totals are also broken down by model and by step. The gateway-reported cost is summed for
+    reference over the calls that have it.
     """
     files = sorted(glob.glob(os.path.join(run_dir, "*", "cost.json")) + glob.glob(os.path.join(run_dir, "cost", "*.json")))
     llm, embedding = _empty_totals(), _empty_totals()
     by_step: Dict[str, Dict[str, Any]] = {}
+    by_model: Dict[str, Dict[str, Any]] = {}
+    embedding_models = set()
     by_stage: Dict[str, Dict[str, Any]] = {}
     unpriced_models, estimated_calls = set(), 0
     gateway = {"calls": 0, "cost_usd": 0.0, "cost_original_usd": 0.0}
@@ -208,10 +211,12 @@ def summarize(run_dir: str, prices: Dict[str, Dict[str, float]] = PRICES) -> Dic
             estimated_calls += entry["usage_source"] == "estimated"
             if entry["kind"] == "embedding":
                 _add(embedding, entry, None)
+                embedding_models.add(entry["model"])
                 continue
             if _add(llm, entry, prices) is None:
                 unpriced_models.add(entry["model"])
             _add(by_step.setdefault(entry["step"], _empty_totals()), entry, prices)
+            _add(by_model.setdefault(entry["model"], _empty_totals()), entry, prices)
             if "stage" in entry:
                 _add(by_stage.setdefault(str(entry["stage"]), _empty_totals()), entry, prices)
             if entry.get("gateway_cost") is not None:
@@ -221,7 +226,8 @@ def summarize(run_dir: str, prices: Dict[str, Dict[str, float]] = PRICES) -> Dic
     for key in ("cost_usd", "cost_usd_uncached", "unpriced_calls"):
         del embedding[key]
     _finalize(llm)
-    for totals in list(by_step.values()) + list(by_stage.values()):
+    embedding["models"] = sorted(embedding_models)
+    for totals in list(by_step.values()) + list(by_model.values()) + list(by_stage.values()):
         _finalize(totals)
     num_questions = len(files)
     per_question = lambda total: None if total is None else (total / num_questions if num_questions else 0.0)
@@ -229,6 +235,7 @@ def summarize(run_dir: str, prices: Dict[str, Dict[str, float]] = PRICES) -> Dic
         "num_questions": num_questions,
         "llm": {**llm, "cost_usd_per_question": per_question(llm["cost_usd"]),
                 "cost_usd_uncached_per_question": per_question(llm["cost_usd_uncached"])},
+        "llm_by_model": by_model,
         "llm_by_step": by_step,
         **({"llm_by_stage": by_stage} if by_stage else {}),
         "embedding": embedding,
