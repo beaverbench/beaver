@@ -1,7 +1,7 @@
 """
 V2 Preprocessing script to convert Beaver dataset format to DINSQL format
 Supports 3 options for different levels of information:
-1. Option 1: Base information with gold tables only
+1. Option 1: Base information with the retrieved top-k tables (setting 0)
 2. Option 2: Base information with gold tables + mapping + join keys
 3. Option 3: Base information with full context (mapping, join keys, external info, subqueries)
 
@@ -339,7 +339,7 @@ if __name__ == '__main__':
     parser.add_argument('--beaver_dir', default='../../data', type=str, 
                         help='Directory containing Beaver dataset files')
     parser.add_argument('--option', type=int, required=True, choices=[1, 2, 3],
-                        help='Preprocessing option: 1=top20_tables, 2=+gold_tables+mapping+join_keys, 3=+external')
+                        help='Preprocessing option: 1=retrieved top-k tables, 2=gold_tables+mapping+join_keys, 3=+external')
     parser.add_argument('--limit', type=int, default=None,
                         help='Limit number of questions to process (for testing)')
     parser.add_argument('--questions_file', type=str, default=None,
@@ -384,9 +384,10 @@ if __name__ == '__main__':
         questions = questions[:args.limit]
         print(f"  Limited to first {args.limit} questions")
     
-    # Collect gold tables
+    # Collect gold tables (options 2-3 only): option 1 (setting 0) keeps every table, so each question sees its
+    # whole retrieved top-k instead of only those that are gold for some question
     gold_tables_filter = None
-    if args.option >= 1:
+    if args.option >= 2:
         print("  Collecting gold tables from questions...")
         gold_tables_filter = collect_all_gold_tables(questions)
         print(f"  Found {len(gold_tables_filter)} unique gold tables across all questions")

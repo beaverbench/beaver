@@ -13,7 +13,12 @@ from utils.enums import LLM
 from utils.post_process import process_duplication, get_sqls
 
 
-def process_batch(batch, submit_folder, db_ids, args, i, 
+def _process_batch(inputs):
+    """Pool.imap_unordered passes one argument; a top-level function so spawned workers can import it."""
+    return process_batch(*inputs)
+
+
+def process_batch(batch, submit_folder, db_ids, args, i,
     openai_api_key, openai_group_id, model):
     """Function to process each batch in parallel."""
 
@@ -173,14 +178,11 @@ if __name__ == '__main__':
     token_cnt = 0
     # Each worker process paces its own requests
     llm_client.split_rpm_across_processes(args.processes)
+    inputs = [(batch, submit_folder, db_ids, args, i, args.openai_api_key, args.openai_group_id, args.model)
+              for i, batch in enumerate(question_loader)]
+    # imap_unordered yields each batch as it finishes, so the bar advances during the run
     with Pool(processes=args.processes) as pool:
-        with tqdm(total=len(question_loader)) as pbar:
-            for _ in pool.starmap(process_batch, [
-                (
-                    batch, submit_folder, db_ids, args, i, 
-                    args.openai_api_key, args.openai_group_id, args.model
-                ) for i, batch in enumerate(question_loader)
-            ]):
-                pbar.update(1)
+        for _ in tqdm(pool.imap_unordered(_process_batch, inputs), total=len(inputs)):
+            pass
 
     cost.write_summary(submit_folder)

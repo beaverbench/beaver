@@ -49,7 +49,8 @@ if [[ ! "${NUM_WORKERS}" =~ ^[1-9][0-9]*$ ]]; then
     echo "--workers must be a positive integer"; exit 1
 fi
 
-# Map setting to internal option number (Python scripts use 1/2/3)
+# Map setting to internal option number (Python scripts use 1/2/3): option 1 = setting 0 (retrieved tables,
+# no hints), option 2 = setting 1 (gold tables, mapping, join keys), option 3 = setting 2 (all hints)
 OPTION=$((SETTING + 1))
 
 # --- Load .env ---

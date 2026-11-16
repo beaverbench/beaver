@@ -235,6 +235,11 @@ def process_single_question(index, row, args, output_base_dir, spider_schema, sp
     return index
 
 
+def _process_question(inputs):
+    """Pool.imap_unordered passes one argument; a top-level function so spawned workers can import it."""
+    return process_single_question(*inputs)
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description="Process dataset and output file.")
@@ -284,13 +289,13 @@ if __name__ == '__main__':
     
     # Each worker process paces its own requests
     dinsql.llm_client.split_rpm_across_processes(args.processes)
+    inputs = [(index, row, args, output_dir, spider_schema, spider_primary, spider_foreign)
+              for index, row in val_df.iterrows() if row['id'] not in pred_ids]
+    print(f"Number of data samples to predict: {len(inputs)}")
+    # imap_unordered yields each question as it finishes, so the bar advances during the run
     with Pool(processes=args.processes) as pool:
-        with tqdm(total=val_df.shape[0]) as pbar:
-            inputs = [(index, row, args, output_dir, spider_schema, spider_primary, spider_foreign) 
-                     for index, row in val_df.iterrows() if row['id'] not in pred_ids]
-            print(f"Number of data samples to predict: {len(inputs)}")
-            for _ in pool.starmap(process_single_question, inputs):
-                pbar.update(1)
+        for _ in tqdm(pool.imap_unordered(_process_question, inputs), total=len(inputs)):
+            pass
 
     print(f"Total time: {time.time() - s_time} seconds")
     print(f"Output directory: {output_dir}")
