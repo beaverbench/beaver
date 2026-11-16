@@ -140,7 +140,8 @@ def _process_sql_data(sql_data):
         if not os.path.exists(agent_format.complete_sql_save_path):
             for filename in os.listdir(search_directory):
                 filepath = os.path.join(search_directory, filename)
-                if os.path.isfile(filepath):
+                # cost.json keeps the earlier stages' calls; this stage appends its own to it
+                if os.path.isfile(filepath) and filename != "cost.json":
                     os.remove(filepath)
         else:
             return

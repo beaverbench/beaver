@@ -194,7 +194,9 @@ def summarize(run_dir: str, prices: Dict[str, Dict[str, float]] = PRICES) -> Dic
     own, and writes cost 1.25x), and cost_usd_uncached with every input token at the input price. Embedding
     calls are counted but not priced. If any chat call's model has no price, the cost is reported as None (see
     _finalize). Chat totals are also broken down by model and by step. The gateway-reported cost is summed for
-    reference over the calls that have it.
+    reference over the calls that have it. A cost file named with a leading "_" (e.g. cost/_estimated_missing.json,
+    usage_source="estimated") adds calls that were not recorded for that run; it counts toward the totals but not
+    as a question.
     """
     files = sorted(glob.glob(os.path.join(run_dir, "*", "cost.json")) + glob.glob(os.path.join(run_dir, "cost", "*.json")))
     llm, embedding = _empty_totals(), _empty_totals()
@@ -208,7 +210,8 @@ def summarize(run_dir: str, prices: Dict[str, Dict[str, float]] = PRICES) -> Dic
         with open(fn) as f:
             calls = json.load(f)["calls"]
         for entry in calls:
-            estimated_calls += entry["usage_source"] == "estimated"
+            if entry["usage_source"] == "estimated":
+                estimated_calls += entry.get("num_calls", 1)
             if entry["kind"] == "embedding":
                 _add(embedding, entry, None)
                 embedding_models.add(entry["model"])
@@ -229,7 +232,7 @@ def summarize(run_dir: str, prices: Dict[str, Dict[str, float]] = PRICES) -> Dic
     embedding["models"] = sorted(embedding_models)
     for totals in list(by_step.values()) + list(by_model.values()) + list(by_stage.values()):
         _finalize(totals)
-    num_questions = len(files)
+    num_questions = sum(not os.path.basename(fn).startswith("_") for fn in files)
     per_question = lambda total: None if total is None else (total / num_questions if num_questions else 0.0)
     return {
         "num_questions": num_questions,
@@ -262,8 +265,8 @@ def write_summary(run_dir: str, prices: Dict[str, Dict[str, float]] = PRICES) ->
         print(f"No price for {summary['unpriced_llm_models']}: add them to PRICES in eval/utils/cost.py; "
               f"their tokens are counted but not priced", file=sys.stderr)
     if summary["estimated_usage_calls"]:
-        print(f"{summary['estimated_usage_calls']} calls have estimated tokens (no usage returned, or a response cut "
-              f"off by a time limit)", file=sys.stderr)
+        print(f"{summary['estimated_usage_calls']} calls have estimated tokens (no usage returned, a response cut off "
+              f"by a time limit, or unrecorded calls added by a _-prefixed cost file)", file=sys.stderr)
     return summary
 
 
