@@ -14,3 +14,5 @@ nltk
 tiktoken
 spacy
 torch
+datasketch
+claude-agent-sdk

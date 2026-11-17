@@ -58,42 +58,28 @@ class BaseChat(ABC):
         self.messages = []
 
 
-from openai import OpenAI, AzureOpenAI, RateLimitError, APIConnectionError, InternalServerError
+from openai import OpenAI, AzureOpenAI
 import os
-import random
-import threading
 
-# Process-wide request pacing for the custom endpoint, shared by all vote threads.
-# LLM_RPM caps total requests per minute (unset/0 = no cap); a 429 pauses every thread, not just the one that hit it.
-_request_lock = threading.Lock()
-_next_request_time = 0.0
-
-def _acquire_request_slot():
-    global _next_request_time
-    rpm = float(os.environ.get("LLM_RPM") or 0)
-    interval = 60.0 / rpm if rpm > 0 else 0.0
-    with _request_lock:
-        now = time.monotonic()
-        start = max(now, _next_request_time)
-        _next_request_time = start + interval
-    if start > now:
-        time.sleep(start - now)
-
-def _pause_all_requests(seconds):
-    global _next_request_time
-    with _request_lock:
-        _next_request_time = max(_next_request_time, time.monotonic() + seconds)
+# eval/utils is appended, not prepended, so this folder's utils.py still wins the `utils` name.
+# llm_client paces every chat completion by LLM_RPM (shared by all vote threads), waits out rate limits,
+# and records each call's token usage for the current question (cost.py).
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "utils"))
+import cost
+import llm_client
 
 class GPTChat(BaseChat):
     def __init__(self, azure=False, model="gpt-4o", temperature=1.0):
         super().__init__(model, temperature)
+        # Step label of this session's calls in cost.json (run.py names the column exploration, format and vote sessions)
+        self.cost_step = "generation"
 
         # Generic OpenAI-compatible endpoint (LLM_BASE_URL + LLM_API_KEY) takes precedence over model-name routing
         base_url = os.environ.get("LLM_BASE_URL")
         self.custom_endpoint = bool(base_url) and not azure
 
         if self.custom_endpoint:
-            # Retries are handled in _create_with_backoff; the SDK's quick retries would keep a rate-limit block alive
+            # Retries are handled by llm_client; the SDK's quick retries would keep a rate-limit block alive
             self.client = OpenAI(
                 base_url=base_url,
                 api_key=os.environ.get("LLM_API_KEY"),
@@ -135,6 +121,7 @@ class GPTChat(BaseChat):
                 api_key=os.environ.get("AZURE_OPENAI_KEY"),
                 api_version=version
             )
+        self.client = llm_client.LLMClient(self.client, step=lambda: self.cost_step)
     
     def close(self):
         """Release the underlying httpx connection pool to avoid leaking sockets/file descriptors."""
@@ -146,31 +133,13 @@ class GPTChat(BaseChat):
                 pass
 
     def _create_with_backoff(self):
-        """Paced chat completion that waits out rate limits (429) instead of failing the vote."""
-        max_rate_limit_retries = int(os.environ.get("LLM_MAX_RATE_LIMIT_RETRIES", 20))
-        rate_limit_retries = 0
-        transient_retries = 0
-        while True:
-            _acquire_request_slot()
-            try:
-                # Plain chat completions; skip provider-specific params keyed on model name
-                return self.client.chat.completions.create(
-                    model=self.model,
-                    messages=self.messages,
-                    temperature=self.temperature
-                )
-            except RateLimitError:
-                if rate_limit_retries >= max_rate_limit_retries:
-                    raise
-                wait = min(60 * 2 ** rate_limit_retries, 300) + random.uniform(0, 10)
-                rate_limit_retries += 1
-                print(f"[Rate limited] model={self.model} pausing all requests {wait:.0f}s (retry {rate_limit_retries}/{max_rate_limit_retries})")
-                _pause_all_requests(wait)
-            except (APIConnectionError, InternalServerError):
-                if transient_retries >= 3:
-                    raise
-                transient_retries += 1
-                time.sleep(10 * transient_retries)
+        """Paced chat completion that waits out rate limits (429) instead of failing the vote (see llm_client)."""
+        # Plain chat completions; skip provider-specific params keyed on model name
+        return self.client.chat.completions.create(
+            model=self.model,
+            messages=self.messages,
+            temperature=self.temperature
+        )
 
     def get_response(self, prompt) -> str:
         self.messages.append({"role": "user", "content": prompt})
@@ -199,6 +168,7 @@ class GPTChat(BaseChat):
                 temperature=self.temperature
             )
             main_content = response.output_text
+            self._record_usage(response)  # the Responses API bypasses LLMClient's chat recording
         elif 'gemini' in self.model:
             if '2' in self.model:
                 time.sleep(1)
@@ -237,3 +207,9 @@ class GPTChat(BaseChat):
 
         self.messages.append({"role": "assistant", "content": main_content})
         return main_content
+
+    def _record_usage(self, response):
+        """Adds a Responses API call's token usage to the current question's cost recorder (eval/utils/cost.py)."""
+        cost.record(cost.usage_record(self.cost_step, self.model, "chat", getattr(response, "usage", None), None,
+                                      prompt_text="\n".join(m["content"] for m in self.messages),
+                                      completion_text=getattr(response, "output_text", None)))

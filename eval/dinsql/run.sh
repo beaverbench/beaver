@@ -9,26 +9,38 @@
 MODEL="gpt-5.2"
 DATASET="dw"
 SETTING=0
+TIMESTAMP=""
+NUM_WORKERS=20
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --model)   MODEL="$2";   shift 2 ;;
         --dataset) DATASET="$2"; shift 2 ;;
         --setting) SETTING="$2"; shift 2 ;;
+        --workers)   NUM_WORKERS="$2"; shift 2 ;;
+        --timestamp) TIMESTAMP="$2"; shift 2 ;;
         --help|-h)
-            echo "Usage: ./run.sh --model <model> --dataset <dataset> --setting <0|1|2>"
+            echo "Usage: ./run.sh --model <model> --dataset <dataset> --setting <0|1|2> [--workers <n>] [--timestamp <ts>]"
             echo ""
             echo "Arguments:"
             echo "  --model    LLM model name (default: gpt-5.2)"
             echo "  --dataset  Dataset split name, e.g. dw, sp, nova, neutron (default: dw)"
             echo "  --setting  Hint setting: 0=ETE, 1=schema hints, 2=all hints (default: 0)"
+            echo "  --workers    Questions processed in parallel (processes) (default: 20)"
+            echo "  --timestamp  Resume an existing run folder ...-log-<timestamp>"
             exit 0
             ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
 
-# Map setting to internal option number (Python scripts use 1/2/3)
+if [[ ! "${NUM_WORKERS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--workers must be a positive integer"; exit 1
+fi
+MODEL_TAG="${MODEL//\//_}"
+
+# Map setting to internal option number (Python scripts use 1/2/3): option 1 = setting 0 (retrieved tables,
+# no hints), option 2 = setting 1 (gold tables, mapping, join keys), option 3 = setting 2 (all hints)
 OPTION=$((SETTING + 1))
 
 # --- Load .env ---
@@ -40,21 +52,25 @@ if [ -f "${script_dir}/../../.env" ]; then
 fi
 
 # --- Check API keys ---
-if [ -z "$OPENAI_API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ] && [ -z "$GOOGLE_API_KEY" ]; then
-    echo "Error: No LLM API key found. Set OPENAI_API_KEY, OPENROUTER_API_KEY, or GOOGLE_API_KEY in eval/.env"
+if [ -z "$OPENAI_API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ] && [ -z "$GOOGLE_API_KEY" ] && [ -z "$LLM_BASE_URL" ]; then
+    echo "Error: No LLM API key found. Set OPENAI_API_KEY, OPENROUTER_API_KEY, GOOGLE_API_KEY, or LLM_BASE_URL in .env"
     exit 1
 fi
 
 # --- Derived Variables ---
 DEV="beaver_${DATASET}_opt${OPTION}"
-NUM_WORKERS=20
 
 # Data paths
 BEAVER_QUESTIONS="../../data/${DATASET}/dev_sampled.json"
 BEAVER_TABLES="../../data/${DATASET}/dev_tables.json"
 
-TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
-OUTPUT_PATH="output/${MODEL}-beaver-${DATASET}-setting${SETTING}-log-${TIMESTAMP}"
+TIMESTAMP="${TIMESTAMP:-$(date +"%Y%m%d-%H%M%S")}"
+OUTPUT_PATH="output/${MODEL_TAG}-beaver-${DATASET}-setting${SETTING}-log-${TIMESTAMP}"
+mkdir -p "${OUTPUT_PATH}"
+# Save everything this script prints to the run folder (appended when a run is resumed); Python output
+# unbuffered so it lands in order
+export PYTHONUNBUFFERED=1
+exec > >(tee -a "${OUTPUT_PATH}/run.log") 2>&1
 
 echo "========================================================================"
 echo "DINSQL on ${DATASET} - Setting ${SETTING} (option ${OPTION})"

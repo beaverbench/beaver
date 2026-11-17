@@ -312,6 +312,7 @@ class REFORCE:
 
     def model_vote(self, result, sql_paths, search_directory, args, table_info, task):
         chat_session = GPTChat(args.azure, args.model_vote)
+        chat_session.cost_step = "vote"
         max_value = max(result.values())
         max_dict = {k: v for k, v in result.items() if v == max_value}
         # print(max_dict)

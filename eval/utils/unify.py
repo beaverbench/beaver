@@ -3,10 +3,12 @@ import json
 import argparse
 import glob
 import re
+import shutil
 from tqdm import tqdm
 
 # Shared by every method's run.sh: copies each run's final SQL plus gold SQL into
-# unified-output/<baseline>/<run_name>/{generated,gold}/<id>.sql for evaluation.
+# unified-output/<baseline>/<run_name>/{generated,gold}/<id>.sql for evaluation, and each question's
+# token usage (cost.json, see cost.py) into unified-output/<baseline>/<run_name>/cost/<id>.json.
 
 eval_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
@@ -26,6 +28,7 @@ def main():
     unified_dir = os.path.join(eval_dir, "unified-output", baseline_name, run_name)
     generated_dir = os.path.join(unified_dir, "generated")
     gold_dir = os.path.join(unified_dir, "gold")
+    cost_dir = os.path.join(unified_dir, "cost")
     
     os.makedirs(generated_dir, exist_ok=True)
     os.makedirs(gold_dir, exist_ok=True)
@@ -85,6 +88,12 @@ def main():
         
         with open(pred_sql_path, "w") as f:
             f.write(pred_sql)
+
+        # 3. Copy the question's token usage, if the method recorded it
+        cost_path = os.path.join(subdir_path, "cost.json")
+        if os.path.exists(cost_path):
+            os.makedirs(cost_dir, exist_ok=True)
+            shutil.copyfile(cost_path, os.path.join(cost_dir, f"{real_id}.json"))
             
     print(f"Saved SQL files to {unified_dir}")
 

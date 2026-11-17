@@ -1,23 +1,12 @@
+import os
+import sys
 from tqdm import tqdm
-from pathlib import Path
 
 from utils import read_json, format_tables, EvalConfig, format_join, system, user, assistant
 
-def get_mapping(mapping):
-    desc = []
-
-    for sq in mapping:
-        cols_desc = []
-        cols = mapping[sq]
-        for col in cols:
-            table_name, col = col.split(".")
-            table_name = f"{table_name.lower()}"
-            cols_desc.append(f"column {col} in table {table_name}")
-        cols_desc = ", ".join(cols_desc)
-        desc.append(f'"{sq}" in the user question refers to {cols_desc}')
-
-    return "\n".join(desc)
-
+# Shared with XiYan-SQL and CHESS; eval/utils is appended, not prepended, so this folder's utils.py keeps the `utils` name
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "utils"))
+from hints import get_mapping, get_retrieved_tables
 
 def get_join_keys(join_keys):
     desc = []
@@ -71,19 +60,6 @@ def get_user_prompt(
 
     return user("\n\n".join(desc))
 
-def get_retrieved_tables(dataset: str, data_dir="../../data"):
-    retrieved_tables_fn = Path(f"{data_dir}/{dataset}/retrieval/retrieved_tables.json")
-    reranked_tables_fn = Path(f"{data_dir}/{dataset}/retrieval/reranked_tables.json")
-
-    assert retrieved_tables_fn.exists()
-    
-    if reranked_tables_fn.exists():
-        print(f'Loading reranked tables from {reranked_tables_fn}')
-        return read_json(reranked_tables_fn)
-    
-    print(f'Loading retrieved tables from {retrieved_tables_fn}')
-    return read_json(retrieved_tables_fn)
-
 def get_ete_prompts(dataset: str, q_fn: str, eval_config: EvalConfig, data_dir: str = "../../data"):
     structures = read_json(f"{data_dir}/template_structure.json")
     qs = read_json(f"{data_dir}/{dataset}/{q_fn}.json")
@@ -91,7 +67,7 @@ def get_ete_prompts(dataset: str, q_fn: str, eval_config: EvalConfig, data_dir: 
     dev_tables = read_json(f"{data_dir}/{dataset}/dev_tables.json")
 
     if not eval_config.gold_tables:
-        retrieved_tables = get_retrieved_tables(dataset)
+        retrieved_tables = get_retrieved_tables(dataset, data_dir)
 
     example_prompt = [
         get_user_prompt(example, example["tables"], dev_tables, eval_config),
@@ -110,7 +86,6 @@ def get_ete_prompts(dataset: str, q_fn: str, eval_config: EvalConfig, data_dir: 
             tables = q["tables"]
         else:
             if q_id not in retrieved_tables:
-                prompts.append(None)
                 continue
             tables = retrieved_tables[q_id]
 

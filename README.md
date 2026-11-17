@@ -3,7 +3,7 @@
 [![Dataset](https://img.shields.io/badge/HuggingFace-Dataset-blue?logo=huggingface)](https://huggingface.co/collections/beaverbench/beaver-dataset)
 [![Paper](https://img.shields.io/badge/arXiv-Paper-red?logo=arxiv)](https://arxiv.org/abs/2409.02038)
 
-This repository contains the evaluation code for the **BEAVER** text-to-SQL benchmark. It includes (i) four text-to-SQL methods: **ReFoRCE**, **DAIL-SQL**, **DIN-SQL**, and **Few-shot** (ii) two evaluation modes: **coarse-grained evaluation** (execution accuracy) and **fine-grained evaluation** across five subtasks critical to text-to-SQL.
+This repository contains the evaluation code for the **BEAVER** text-to-SQL benchmark. It includes (i) seven text-to-SQL methods: **ReFoRCE**, **DAIL-SQL**, **DIN-SQL**, **Few-shot**, **XiYan-SQL**, **CHESS**, and **Claude Code** (ii) three evaluation modes: **coarse-grained evaluation** (execution accuracy), **fine-grained evaluation** across five subtasks critical to text-to-SQL, and **cost** (tokens and dollars of the LLM calls).
 
 If you find our data, code, or the paper helpful, please cite the paper:
 ```
@@ -30,6 +30,8 @@ If you find our data, code, or the paper helpful, please cite the paper:
 │   ├── dailsql/                         # DAIL-SQL evaluation pipeline
 │   ├── dinsql/                          # DIN-SQL evaluation pipeline
 │   ├── xiyansql/                        # XiYan-SQL evaluation pipeline
+│   ├── chess/                           # CHESS evaluation pipeline
+│   ├── claudecode/                      # Claude Code evaluation pipeline
 │   ├── evaluate_ex_acc.py               # Script for computing execution accuracy
 │   └── evaluate_subtasks.py             # Script for subtask evaluation
 └── retrieve/                            # Table retrieval
@@ -52,12 +54,26 @@ MYSQL_HOST=localhost
 MYSQL_USER=root
 MYSQL_PASSWORD=xxx
 
-# Optional for ReFoRCE, required for XiYan-SQL: if LLM_BASE_URL is set, ReFoRCE sends ALL requests to this
-# OpenAI-compatible endpoint (e.g., vLLM) and ignores OPENAI_API_KEY / OPENROUTER_API_KEY.
+# Required for XiYan-SQL, optional for the other methods: if LLM_BASE_URL is set, every method but Claude Code sends ALL LLM
+# requests to this OpenAI-compatible endpoint (e.g., vLLM or a LiteLLM gateway) and ignores OPENAI_API_KEY / OPENROUTER_API_KEY.
 # Always set LLM_API_KEY (any placeholder if the endpoint needs none).
 LLM_BASE_URL=xxx
 LLM_API_KEY=xxx
-LLM_RPM=30   # (ReFoRCE only) cap on requests per minute, for rate-limited endpoints
+LLM_RPM=xxx   # optional: cap on LLM requests per minute for the whole run (unset = no cap), for rate-limited endpoints
+
+# Optional for CHESS: OpenAI-compatible endpoint and model for embeddings (default: OpenRouter with OPENROUTER_API_KEY,
+# qwen/qwen3-embedding-8b); --embedding_model overrides EMBED_MODEL
+EMBED_BASE_URL=xxx
+EMBED_API_KEY=xxx
+EMBED_MODEL=xxx
+
+# Required for Claude Code (it does not read LLM_BASE_URL / LLM_API_KEY); set only one of (a) or (b):
+# (a) the Anthropic API directly:
+ANTHROPIC_API_KEY=xxx
+# (b) or a gateway with an Anthropic-format /v1/messages endpoint (e.g., LiteLLM); the base URL leaves out the
+#     trailing /v1, and the token is the gateway key (sent as "Authorization: Bearer")
+ANTHROPIC_BASE_URL=xxx
+ANTHROPIC_AUTH_TOKEN=xxx
 ```
 
 ### Data Pre-processing
@@ -93,12 +109,14 @@ Note: the retrieval step outputs `retrieved_tables.json`, and the reranking step
 
 ## Text-to-SQL methods
 
-We consider five text-to-SQL methods:
+We consider seven text-to-SQL methods:
 1. ReFoRCE (adapted from [this official ReFoRCE implementation](https://github.com/Snowflake-Labs/ReFoRCE/tree/o3/methods/ReFoRCE)): an agentic method with candidate generation, majority voting, and column exploration.
 2. DIN-SQL (adapted from [this Spider2 implementation](https://github.com/xlang-ai/Spider2/tree/main/spider2-lite/baselines/dinsql)): a method with query decomposition and self-correction
 3. DAIL-SQL (adapted from [this Spider2 implementation](https://github.com/xlang-ai/Spider2/tree/main/spider2-lite/baselines/dailsql)): a method with example selection
 4. Few-shot: a method with static in-context examples
 5. XiYan-SQL (using [XiYanSQL-QwenCoder-32B-2504](https://github.com/XGenerationLab/XiYanSQL-QwenCoder)): a fine-tuned text-to-SQL model
+6. CHESS (adapted from [the official CHESS implementation](https://github.com/ShayanTalaei/CHESS)): a method with value retrieval, schema selection, and candidate generation with revision
+7. Claude Code (through the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python)): a coding agent with tools for read-only SQL execution
 
 ### Environment
 
@@ -136,26 +154,24 @@ vllm serve XGenerationLab/XiYanSQL-QwenCoder-32B-2504 \
 All methods can be executed using the `run.sh` script in their respective folders.
 ```bash
 cd eval/[method]
-./run.sh --model [model] --dataset [dataset] --setting {0,1,2}
+./run.sh --model [model] --dataset [dataset] --setting {0,1,2} [--workers [workers]] [--timestamp [timestamp]]
 ```
 - `model`: the LLM for SQL generation (e.g., `gpt-5-mini`); for XiYan-SQL, the vLLM `--served-model-name` (e.g., `xiyansql-32b-2504`)
 - `dataset`: one of `dw`, `dw_real`, `neutron`, `nova`
 - `setting=0` *(default setting)*: Standard end-to-end setting with no hints. Base information with only the top-k tables retrieved from [table retrieval](#table-retrieval).
 - `setting=1`: With hints for three schema-linking subtasks. Includes gold tables, column mapping, and join keys.
 - `setting=2`: With hints for all five subtasks. Includes three subtasks in `setting=1`, domain knowledge, and subquery decomposition.
+- `workers` *(optional)*: number of questions processed in parallel (the default varies by method; see `./run.sh --help`)
+- `timestamp` *(optional)*: resume an interrupted run by reusing its output folder (the `YYYYMMDD-HHMMSS` suffix of its `...-log-[timestamp]` folder); questions already answered are skipped.
 
-ReFoRCE and XiYan-SQL also accept two optional arguments:
-```bash
-./run.sh --model [model] --dataset [dataset] --setting {0,1,2} --workers [workers] --timestamp [timestamp]
-```
-- `workers`: number of questions processed in parallel (default `16`); each ReFoRCE question runs 8 votes. Lower it if you hit rate limits.
-- `timestamp`: resume an interrupted run by reusing its output folder (the `YYYYMMDD-HHMMSS` suffix of `output/...-log-[timestamp]`).
+CHESS also accepts `--embedding_model [embedding_model]` (default `EMBED_MODEL` in `.env`, else `qwen/qwen3-embedding-8b` on OpenRouter; set `EMBED_BASE_URL` to use another endpoint).
 
 ## Evaluation
 
-We evaluate text-to-SQL methods in two complementary modes:
+We evaluate text-to-SQL methods in three complementary modes:
 1. **Coarse-grained evaluation** using execution accuracy. This is the standard metric, but an all-or-nothing signal makes it hard to diagnose where a method failed, especially when producing a correct SQL involves solving multiple *compounded* challenges, such as domain knowledge and complex query construction.
 2. **Fine-grained evaluation** across five subtasks critical to text-to-SQL performance, enabling more targeted error analysis.
+3. **Cost** of the LLM calls a method makes, in tokens and dollars.
 
 ### Execution accuracy
 Execution accuracy (`ex_acc`) is 1 when the generated SQL returns the same execution result as the gold SQL, and 0 otherwise.
@@ -181,3 +197,10 @@ For each subtask (except query decomposition), we compare information extracted 
 python evaluate_subtasks.py --dataset [dataset] --model [model] --input_dir unified-output/[method]/[run_name]
 ```
 <!-- *(This produces `summary_subtasks.json` and detailed outputs in folder `subtask_eval/` in the `input_dir`)* -->
+
+### Cost
+Every method records the token usage of each LLM call while generating SQL. The cost is computed from the tokens at the list prices in `PRICES` in `eval/utils/cost.py`; models without a price there are reported in tokens only.
+```bash
+python utils/cost.py --input_dir unified-output/[method]/[run_name]
+```
+<!-- *(This produces `cost_summary.json` in the `input_dir`)* -->

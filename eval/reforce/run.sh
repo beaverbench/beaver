@@ -49,7 +49,8 @@ if [[ ! "${NUM_WORKERS}" =~ ^[1-9][0-9]*$ ]]; then
     echo "--workers must be a positive integer"; exit 1
 fi
 
-# Map setting to internal option number (Python scripts use 1/2/3)
+# Map setting to internal option number (Python scripts use 1/2/3): option 1 = setting 0 (retrieved tables,
+# no hints), option 2 = setting 1 (gold tables, mapping, join keys), option 3 = setting 2 (all hints)
 OPTION=$((SETTING + 1))
 
 # --- Load .env ---
@@ -69,6 +70,11 @@ GOLD_RESULT_PATH="output/${MODEL_TAG}-beaver-${DATASET}-setting${SETTING}-gold-$
 if [[ "${FROM_STEP}" == "2" && ! -d "${OUTPUT_PATH}" ]]; then
     echo "--from-step 2: run folder not found: ${OUTPUT_PATH}"; exit 1
 fi
+mkdir -p "${OUTPUT_PATH}"
+# Save everything this script prints to the run folder (appended when a run is resumed); Python output
+# unbuffered so it lands in order
+export PYTHONUNBUFFERED=1
+exec > >(tee -a "${OUTPUT_PATH}/run.log") 2>&1
 NUM_VOTES=8
 
 # Export DB name for sql.py env-var fallback
@@ -111,6 +117,7 @@ echo "Step 1: Self-refinement + Majority Voting"
 echo "=========================================="
 
 python run.py \
+    --stage 1 \
     --task beaver \
     --output_path $OUTPUT_PATH \
     --omnisql_format_pth $DATA_FILE \
@@ -139,6 +146,7 @@ echo ""
 echo "Step 2: Column Exploration + Rerun"
 echo "===================================="
 python run.py \
+    --stage 2 \
     --task beaver \
     --output_path $OUTPUT_PATH \
     --omnisql_format_pth $DATA_FILE \
@@ -170,6 +178,7 @@ echo ""
 echo "Step 3: Random Vote for Tie"
 echo "=============================="
 python run.py \
+    --stage 3 \
     --task beaver \
     --output_path $OUTPUT_PATH \
     --omnisql_format_pth $DATA_FILE \
@@ -192,6 +201,7 @@ echo ""
 echo "Step 4: Final Vote"
 echo "==================="
 python run.py \
+    --stage 4 \
     --task beaver \
     --output_path $OUTPUT_PATH \
     --omnisql_format_pth $DATA_FILE \

@@ -1,26 +1,22 @@
 import json.decoder
-from openai import OpenAI
 from utils.enums import LLM
-import time
 import os
+import sys
+
+# eval/utils is appended, not prepended, so this folder's utils package still wins the `utils` name
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "utils"))
+import cost
+import llm_client
 
 CLIENT = None
 
+
 def init_chatgpt(OPENAI_API_KEY, OPENAI_GROUP_ID, model):
     global CLIENT
-    if "gemini" in model:
-        CLIENT = OpenAI(
-            api_key=os.environ.get("GEMINI_API_KEY"),
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
-        )
-    elif "/" in model:
-        CLIENT = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=os.environ.get("OPENROUTER_API_KEY"),
-        )
-    else:
-        CLIENT = OpenAI(api_key=OPENAI_API_KEY)
-        # openai.organization = OPENAI_GROUP_ID # v1.x handles this differently if needed, usually just api_key is enough for standard usage
+    if OPENAI_API_KEY:  # --openai_api_key, used for OpenAI models
+        os.environ.setdefault("OPENAI_API_KEY", OPENAI_API_KEY)
+    # LLM_BASE_URL, else Gemini / OpenRouter ("/" in the name) / OpenAI; requests are paced and their usage recorded
+    CLIENT = llm_client.LLMClient(llm_client.make_client(model), step="generate")
 
 def ask_chat(model, messages: list, temperature, n, max_tokens):
     global CLIENT
@@ -70,11 +66,8 @@ def ask_chat(model, messages: list, temperature, n, max_tokens):
                 temperature=temperature,
                 max_tokens=max_tokens,
                 n=n,
-                extra_body={
-                    "reasoning": {
-                        "effort": "none",
-                    }
-                },
+                # OpenRouter-only parameter; a custom endpoint (LLM_BASE_URL) gets none
+                **({} if llm_client.custom_endpoint() else {"extra_body": {"reasoning": {"effort": "none"}}}),
         )
         elif "minimax" in model:
             response = CLIENT.chat.completions.create(

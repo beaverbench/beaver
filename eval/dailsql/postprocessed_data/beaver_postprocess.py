@@ -300,6 +300,7 @@ if __name__ == "__main__":
     parser.add_argument('--dev_file', type=str, default=None, help='Path to preprocessed dev questions json')
     parser.add_argument('--dev', type=str, default=None, help='Dev dataset name (for folder naming)')
     parser.add_argument('--tables_file', type=str, default=None, help='Path to tables json (for casing fix)')
+    parser.add_argument('--results_dir', type=str, default=None, help="Folder of this run's results, as given to ask_llm.py")
     args = parser.parse_args()
 
     # Construct path based on dev name if provided, else output default
@@ -310,7 +311,7 @@ if __name__ == "__main__":
         # Fallback to old behavior
         folder_name = f"{args.comment}_beaver_opt{args.option}_CTX-{args.max_tokens}"
 
-    root_path = osp.join(proj_dir, f'postprocessed_data/{folder_name}/RESULTS_MODEL-{args.model}-SQL')
+    root_path = osp.join(proj_dir, args.results_dir or f'postprocessed_data/{folder_name}/RESULTS_MODEL-{args.model}-SQL')
     
     if args.dev_file:
          dev_json = args.dev_file

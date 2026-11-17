@@ -1,12 +1,17 @@
 import os
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
-from openai import OpenAI
 
 from prompt import get_ete_prompts
 from utils import EvalConfig
 
 import argparse
+import sys
+
+# eval/utils is appended, not prepended, so this folder's utils.py still wins the `utils` name
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "utils"))
+import cost
+import llm_client
 
 MODEL_MAP = {
     "gpt-5-mini": "gpt-5-mini",
@@ -37,7 +42,7 @@ def process_output(output):
 
 
 
-def run_prompts(prompts, indices, instance_ids, output_dir: str, model: str):
+def run_prompts(prompts, indices, instance_ids, output_dir: str, model: str, num_workers: int = 20):
     prompts_to_process = []
     indices_to_process = []
     instance_ids_to_process = []
@@ -58,112 +63,47 @@ def run_prompts(prompts, indices, instance_ids, output_dir: str, model: str):
 
     print(f"Running {len(prompts_to_process)} prompts...")
     
-    # Using environment variable for API key
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     model_name = MODEL_MAP.get(model, model)
-
-
-    if "gemini" in model_name:
-        client = OpenAI(
-                    api_key=os.environ.get("GEMINI_API_KEY"),
-                    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
-                )
-    elif "qwen" in model_name:
-        client = OpenAI(
-                    base_url="https://openrouter.ai/api/v1",
-                    api_key=os.environ.get("OPENROUTER_API_KEY"),
-                )
-    elif "claude" in model_name:
-        client = OpenAI(
-                    base_url="https://openrouter.ai/api/v1",
-                    api_key=os.environ.get("OPENROUTER_API_KEY"),
-                )
-    elif "minimax" in model_name:
-        client = OpenAI(
-                    base_url="https://openrouter.ai/api/v1",
-                    api_key=os.environ.get("OPENROUTER_API_KEY"),
-                )
-    else:
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    # LLM_BASE_URL, else Gemini / OpenRouter ("/" in the name) / OpenAI; requests are paced and their usage recorded
+    client = llm_client.LLMClient(llm_client.make_client(model_name), step="generate")
 
     def process_prompt(item):
         prompt, idx, instance_id = item
         if prompt is None:
-            return idx, instance_id, "", ""
+            return
 
+        # Token usage of this question's call (eval/utils/cost.py); a rerun replaces its cost.json
+        recorder = cost.start_recording()
         try:
-            if "gemini" in model_name:
-                resp = client.chat.completions.create(
-                    model=model_name,
-                    messages=prompt,
-                    # temperature=0,
-                )
-            elif "qwen" in model_name:
-                resp = client.chat.completions.create(
-                    model=model_name,
-                    messages=prompt,
-                    # temperature=0,
-                    extra_body={
-                    "reasoning": {
-                        "effort": "none",
-                    }
-                },
-                )
-            elif "claude" in model_name:
-                resp = client.chat.completions.create(
-                    model=model_name,
-                    messages=prompt,
-                    # temperature=0,
-                    extra_body={
-                    "reasoning": {
-                        "effort": "none",
-                    }
-                },
-                )
-            elif "minimax" in model_name:
-                resp = client.chat.completions.create(
-                    model=model_name,
-                    messages=prompt,
-                    # temperature=0,
-                )
-            else:
-                resp = client.chat.completions.create(
-                    model=model_name,
-                    messages=prompt,
-                    # temperature=0,
-                )
-            
+            # Reasoning is turned off for Qwen and Claude on OpenRouter; a custom endpoint gets a plain request
+            kwargs = {}
+            if not llm_client.custom_endpoint() and ("qwen" in model_name or "claude" in model_name):
+                kwargs["extra_body"] = {"reasoning": {"effort": "none"}}
+            resp = client.chat.completions.create(
+                model=model_name,
+                messages=prompt,
+                **kwargs,
+            )
             content = resp.choices[0].message.content
             # To match the structure of other baselines, we could log the prompt/response
             # Here we provide a simple generic generation log.
-            generation_log = f"Prompt:\n{prompt}\n\nResponse:\n{content}"
-            return idx, instance_id, content, generation_log
+            gen_log = f"Prompt:\n{prompt}\n\nResponse:\n{content}"
         except Exception as e:
             print(f"Error processing index {idx}: {e}")
-            return idx, instance_id, "", f"Error: {e}"
+            content, gen_log = "", f"Error: {e}"
 
-    # Using ThreadPoolExecutor for parallel processing
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        # Zip prompts with indices for processing
+        # Saved as each question finishes, so an interrupted run can resume
+        instance_dir = os.path.join(output_dir, instance_id)
+        os.makedirs(instance_dir, exist_ok=True)
+        with open(os.path.join(instance_dir, "predicted_0.sql"), "w") as f:
+            f.write(process_output(content or ""))
+        with open(os.path.join(instance_dir, "generation.log"), "w") as f:
+            f.write(gen_log)
+        recorder.write(os.path.join(instance_dir, "cost.json"))
+
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
         items = list(zip(prompts_to_process, indices_to_process, instance_ids_to_process))
-        
-        # Map returns results in the same order as input
-        results = list(tqdm(executor.map(process_prompt, items), total=len(items)))
-        
-        # save results
-        for idx, instance_id, content, gen_log in results:
-            processed_sql = process_output(content)
-            
-            instance_dir = os.path.join(output_dir, instance_id)
-            os.makedirs(instance_dir, exist_ok=True)
-            
-            sql_file = os.path.join(instance_dir, "predicted_0.sql")
-            log_file = os.path.join(instance_dir, "generation.log")
-            
-            with open(sql_file, "w") as f:
-                f.write(processed_sql)
-            with open(log_file, "w") as f:
-                f.write(gen_log)
+        list(tqdm(executor.map(process_prompt, items), total=len(items)))
 
 
 if __name__ == "__main__":
@@ -173,6 +113,7 @@ if __name__ == "__main__":
     parser.add_argument("--q_fn", type=str, default="dev")
     parser.add_argument("--output_dir", type=str, default="")
     parser.add_argument("--data_dir", type=str, default="../../data")
+    parser.add_argument("--num_workers", type=int, default=20)
     parser.add_argument("--gold_tables", action="store_true")
     parser.add_argument("--join_keys", action="store_true")
     parser.add_argument("--mapping", action="store_true")
@@ -199,4 +140,5 @@ if __name__ == "__main__":
     selected_indices = list(range(len(prompts)))
     selected_prompts = [prompts[i] for i in selected_indices]
 
-    run_prompts(selected_prompts, selected_indices, instance_ids, output_dir, model)
+    run_prompts(selected_prompts, selected_indices, instance_ids, output_dir, model, args.num_workers)
+    cost.write_summary(output_dir)
