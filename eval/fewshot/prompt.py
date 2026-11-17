@@ -6,7 +6,7 @@ from utils import read_json, format_tables, EvalConfig, format_join, system, use
 
 # Shared with XiYan-SQL and CHESS; eval/utils is appended, not prepended, so this folder's utils.py keeps the `utils` name
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "utils"))
-from hints import get_mapping, get_retrieved_tables
+from hints import get_mapping, get_retrieved_tables, dk_sentences
 
 def get_join_keys(join_keys):
     desc = []
@@ -23,7 +23,7 @@ def get_join_keys(join_keys):
 
 
 def get_knowledge(domain_knowledge):
-    return "\n".join(domain_knowledge)
+    return "\n".join(dk_sentences(domain_knowledge))
 
 
 def get_decomp(decomps):

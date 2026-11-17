@@ -8,8 +8,12 @@ into the format expected by ReFoRCE with 3 preprocessing options.
 import json
 import argparse
 import random
+import sys
 from pathlib import Path
 import re
+
+sys.path.append(str(Path(__file__).resolve().parent.parent / "utils"))
+from hints import dk_sentences
 
 
 def format_instances_as_examples(instances, column_names):
@@ -396,7 +400,7 @@ def convert_beaver_to_reforce(dataset, beaver_questions_path, beaver_tables_path
 
             if domain_knowledge:
                 db_desc += "\n\n-- Domain Knowledge (database-wide):\n"
-                db_desc += "\n".join(domain_knowledge)
+                db_desc += "\n".join(dk_sentences(domain_knowledge))
                 db_desc += "\n"
                 db_desc += "You should use the domain knowledge to help determine which tables and columns to use in the SQL statement as well as constructing the SQL statement."
 

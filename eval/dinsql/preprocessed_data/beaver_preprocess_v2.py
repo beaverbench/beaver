@@ -14,6 +14,9 @@ import sys
 import re
 from pathlib import Path
 
+sys.path.append(str(Path(__file__).resolve().parents[2] / "utils"))
+from hints import dk_sentences
+
 
 def convert_beaver_tables_to_dinsql_format(beaver_tables_path, output_path, gold_tables_filter=None, split='dw'):
     """
@@ -292,7 +295,7 @@ def convert_beaver_questions_to_dinsql_format(dataset, beaver_questions_path, ou
             
             if domain_knowledge:
                 base_item['question'] += "\n\n-- Domain Knowledge (database-wide):\n"
-                base_item['question'] += "\n".join(domain_knowledge)
+                base_item['question'] += "\n".join(dk_sentences(domain_knowledge))
                 base_item['question'] += "\n"
                 base_item['question'] += "You should use the domain knowledge to help determine which tables and columns to use in the SQL statement as well as constructing the SQL statement."
 

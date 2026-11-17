@@ -2,9 +2,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-# Hint settings and evidence text shared by the XiYan-SQL and CHESS baselines (Few-shot uses get_mapping and
-# get_retrieved_tables). XiYan-SQL and CHESS pass join keys as foreign keys in the schema, so the evidence holds
-# only mapping, domain knowledge and decomposition.
+# Hint settings and evidence text shared by the XiYan-SQL, CHESS and Claude Code baselines; Few-shot, ReFoRCE,
+# DIN-SQL and DAIL-SQL import single helpers (get_mapping, get_retrieved_tables, dk_sentences). XiYan-SQL, CHESS
+# and Claude Code pass join keys in the schema, so the evidence holds only mapping, domain knowledge and decomposition.
 # Instruction sentences are worded as in the ReFoRCE preprocessing (knowledge and decomposition ones are
 # shared with DIN-SQL and DAIL-SQL).
 
@@ -35,6 +35,11 @@ def get_mapping(mapping):
     return "\n".join(desc)
 
 
+def dk_sentences(domain_knowledge):
+    """Hint sentences from domain_knowledge (list of dicts with 'fact', or legacy list of strings)."""
+    return [d["fact"] if isinstance(d, dict) else d for d in (domain_knowledge or [])]
+
+
 def get_decomp(q, structures):
     desc = [f"Subquery {i + 1}: {subq}" for i, subq in enumerate(q["sub_questions"])]
     if not desc:
@@ -52,8 +57,9 @@ def get_evidence(q, eval_config: EvalConfig, structures):
     evidence = []
     if eval_config.mapping:
         evidence.append(f"Mapping:\n{get_mapping(q['column_mapping'])}\n{MAPPING_INSTRUCTION}")
-    if eval_config.knowledge and "\n".join(q['domain_knowledge']) != "":
-        evidence.append("Domain knowledge:\n" +"\n".join(q['domain_knowledge']) + f"\n{KNOWLEDGE_INSTRUCTION}")
+    knowledge = "\n".join(dk_sentences(q['domain_knowledge']))
+    if eval_config.knowledge and knowledge:
+        evidence.append(f"Domain knowledge:\n{knowledge}\n{KNOWLEDGE_INSTRUCTION}")
     if eval_config.decomp:
         decomp = get_decomp(q, structures)
         if decomp:

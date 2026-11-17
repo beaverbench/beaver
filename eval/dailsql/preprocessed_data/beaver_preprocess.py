@@ -16,6 +16,9 @@ from tqdm import tqdm
 import re
 from pathlib import Path
 
+sys.path.append(str(Path(__file__).resolve().parents[2] / "utils"))
+from hints import dk_sentences
+
 
 def convert_beaver_tables_to_dailsql_format(beaver_tables_path, output_path, gold_tables_filter=None, split='dw'):
     """
@@ -329,7 +332,7 @@ def convert_beaver_questions_to_dailsql_format(dataset, beaver_questions_path, o
             
             if domain_knowledge:
                 question_text += "\n\n-- Domain Knowledge (database-wide):\n"
-                question_text += "\n".join(domain_knowledge)
+                question_text += "\n".join(dk_sentences(domain_knowledge))
                 question_text += "\n"
                 question_text += "You should use the domain knowledge to help determine which tables and columns to use in the SQL statement as well as constructing the SQL statement."
 
