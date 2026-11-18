@@ -3,11 +3,12 @@ import re
 EXTRACTION_PROMPT = """
 You are an expert SQL parser. Your task is to extract specific components from the provided SQL query into a JSON format.
 You must extract ONLY objects that exist in the database schema. Do NOT extract intermediate tables (CTEs), subquery aliases, or derived tables.
+Copy table and column names exactly as they are written in the SQL; do not add or remove underscores or otherwise correct their spelling.
 
 1. "tables": A list of all DATABASE table names referenced in the query (FROM, JOIN). Ignore CTE names and subquery aliases.
-2. "columns": A list of all fully qualified DATABASE columns used (SELECT, WHERE, GROUP BY, HAVING, ORDER BY, JOIN conditions). Format: "TABLE_NAME.COLUMN_NAME". Ignore aliases, map back to real table names. If table name is unknown, use the alias or inferred name, but ensure it maps to a real table.
-3. "join_keys": A list of join conditions between DATABASE tables. Format: "TABLE1.COL1 = TABLE2.COL2". Order of operands does not matter. Do NOT include joins involving CTEs.
-4. "domain_knowledge": A list of domain-specific predicates found in WHERE or HAVING clauses. Format: "TABLE.COL <OP> VALUE". Examples: "INSTANCES.DELETED = 0", "INSTANCES.HOST = 'prime-35'". Do NOT include join conditions here.
+2. "columns": A list of all fully qualified DATABASE columns used (SELECT, WHERE, GROUP BY, HAVING, ORDER BY, JOIN conditions). Format: "TABLE_NAME.COLUMN_NAME". Ignore aliases, map back to real table names. If table name is unknown, use the alias or inferred name, but ensure it maps to a real table. Do not expand "*" into columns.
+3. "join_keys": A list of equality join conditions between two *different* database tables, in the form "TABLE1.COL1 = TABLE2.COL2". When a join goes through a CTE, subquery or derived table, trace each side back to the database table column it comes from and report that. Do not report a table joined with itself.
+4. "predicates": Every predicate in WHERE, HAVING or ON clauses (including inside CTEs and subqueries) that compares a database column with a literal value, a list of literals, or a subquery (e.g. "COL NOT IN (SELECT ...)"), with any operator (=, <>, !=, <, >, <=, >=, IN, NOT IN, LIKE, NOT LIKE, REGEXP, IS NULL, IS NOT NULL). Trace the column back to its database table. Do not judge whether the predicate is domain-specific; list all of them. If the column is wrapped in a function (UPPER(...), LOWER(...)), report the bare column and put the function in "function". If the right-hand side is a subquery, set "values" to null and "subquery" to true.
 
 SQL Query:
 <<<
@@ -16,149 +17,199 @@ SQL Query:
 
 Output JSON format:
 {{
-  "tables": ["TABLE1", "TABLE2", ...],
-  "columns": ["TABLE1.COL1", "TABLE2.COL2", ...],
+  "tables": ["TABLE1", ...],
+  "columns": ["TABLE1.COL1", ...],
   "join_keys": ["TABLE1.ID = TABLE2.REF_ID", ...],
-  "domain_knowledge": ["TABLE.STATUS = 'active'", ...]
+  "predicates": [
+    {{"table": "SIS_DEPARTMENT", "column": "DEPARTMENT_NAME", "op": "=", "values": ["Mathematics"]}},
+    {{"table": "SIS_DEPARTMENT", "column": "DEPARTMENT_CODE", "op": "NOT IN", "values": ["5", "7"]}}
+  ]
 }}
 """
 
-def normalize_join_key(join_str):
-    """Normalize join key string to set of operands for order-independent comparison."""
-    # Remove spaces
-    join_str = join_str.replace(" ", "")
-    parts = join_str.split("=")
-    if len(parts) == 2:
-        return frozenset([parts[0].upper(), parts[1].upper()])
-    return frozenset([join_str.upper()])
+# Every metric returns None when the record's gold set is empty, so averages skip it instead of counting 0.
+# Known limitation: X = 'a' OR X = 'b' is not merged into X IN ('a', 'b').
 
-def compute_f1(generated_set, gold_set):
-    """Compute F1 score between two sets of strings."""
-    # Normalize to upper case
-    gen_norm = set([s.upper() for s in generated_set])
-    gold_norm = set([s.upper() for s in gold_set])
-    
-    tp = len(gen_norm.intersection(gold_norm))
-    fp = len(gen_norm - gold_norm)
-    fn = len(gold_norm - gen_norm)
-    
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-    
-    return f1
+NUM = re.compile(r"^-?\d+(?:\.\d+)?$")
 
-def extract_predicates_from_evidence(evidence_list):
-    """
-    Extract predicates from evidence strings. 
-    Evidence strings are often: "Host 'foo' is predicated by 'instances.host = foo'"
-    We try to extract the part inside the last pair of quotes, or just the raw string if simpler.
-    """
-    predicates = []
-    for ev in evidence_list:
-        # Regex to find "table.col = val" pattern often quoted at the end
-        # Example: ... predicated by "instances.host = 'blaze8-12'"
-        # We need to handle both " and ' wrappers, but " seems more common in this dataset.
-        match = re.search(r'predicated by "(.*?)"', ev)
-        if match:
-             predicates.append(match.group(1))
-        else:
-             match = re.search(r"predicated by '(.*?)'", ev)
-             if match:
-                 predicates.append(match.group(1))
-    return predicates
 
-def compute_predicate_f1(generated_set, gold_set):
-    """
-    Compute F1 for domain knowledge predicates, handling table name mismatches.
-    Gold often uses 'TABLE.' placeholder or no table name, while generated has specific table name.
-    Strategy: Strip table name prefix (everything before first dot) from both sides and compare.
-    """
-    def remove_table_prefix(s):
-        if "." in s:
-            return s.split(".", 1)[1]
-        return s
+def _ident(x):
+    """Table or column name: uppercase, no backticks/quotes, database prefix dropped (dw.TABLE -> TABLE)."""
+    return str(x).replace("`", "").replace('"', "").split(".")[-1].strip().upper()
 
-    # Normalize to upper case and strip table prefix
-    gen_processed = set([remove_table_prefix(s.upper().strip()) for s in generated_set])
-    gold_processed = set([remove_table_prefix(s.upper().strip()) for s in gold_set])
-    
-    tp = len(gen_processed.intersection(gold_processed))
-    fp = len(gen_processed - gold_processed)
-    fn = len(gold_processed - gen_processed)
-    
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-    
-    return f1
+
+def _col(x):
+    """TABLE.COLUMN with the same normalization; a database prefix (dw.TABLE.COLUMN) is dropped."""
+    parts = str(x).replace("`", "").replace('"', "").strip().upper().split(".")
+    return ".".join(p.strip() for p in parts[-2:])
+
+
+def _join(x):
+    """Order-independent join key from "A = B" or [A, B]."""
+    sides = x if isinstance(x, (list, tuple)) else str(x).split("=")
+    return frozenset(_col(s) for s in sides)
+
+
+def _different_tables(join):
+    """Gold join keys never join a table with itself (self-joins, CTEs traced back to the same table)."""
+    return len({c.split(".")[0] for c in join}) == len(join) == 2
+
+
+def _f1(precision, recall):
+    return 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+
+
+def set_f1(generated, gold):
+    if not gold:
+        return None
+    tp = len(generated & gold)
+    precision = tp / len(generated) if generated else 0.0
+    return _f1(precision, tp / len(gold))
+
+
+def _components(joins):
+    """Column -> equivalence-class id under the transitive closure of the join equalities."""
+    parent = {}
+
+    def find(c):
+        parent.setdefault(c, c)
+        while parent[c] != c:
+            parent[c] = parent[parent[c]]
+            c = parent[c]
+        return c
+
+    for j in joins:
+        x, y = sorted(j)
+        parent[find(x)] = find(y)
+    return {c: find(c) for c in parent}
+
+
+def _implied(join, components):
+    x, y = sorted(join)
+    return x in components and y in components and components[x] == components[y]
+
+
+def join_f1(generated, gold):
+    """F1 over join keys up to transitivity: a generated pair is correct if the gold equalities imply it, and a gold
+    pair is recovered if the generated equalities imply it (A = B, B = C and A = B, A = C join the same columns)."""
+    if not gold:
+        return None
+    gold_c, gen_c = _components(gold), _components(generated)
+    precision = sum(_implied(j, gold_c) for j in generated) / len(generated) if generated else 0.0
+    recall = sum(_implied(j, gen_c) for j in gold) / len(gold)
+    return _f1(precision, recall)
+
+
+def set_recall(generated, gold):
+    if not gold:
+        return None
+    return len(generated & gold) / len(gold)
+
+
+def _value(v):
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "'\"":
+        s = s[1:-1]
+    if NUM.match(s):
+        return float(s)
+    return s.lower()  # MySQL's default collation is case-insensitive
+
+
+def canon(p, with_table=True):
+    """Comparable predicate key: != -> <>, single-value IN/NOT IN -> =/<>, values as a set; 'function' ignored."""
+    op = re.sub(r"\s+", " ", str(p["op"]).strip().upper())
+    if op == "!=":
+        op = "<>"
+    if op in ("IS NULL", "IS NOT NULL"):
+        vals = ()
+    elif p.get("subquery") or p.get("values") is None:
+        vals = ("<SUBQUERY>",)
+    else:
+        vals = tuple(sorted({_value(v) for v in p["values"]}, key=repr))
+        if op == "IN" and len(vals) == 1:
+            op = "="
+        elif op == "NOT IN" and len(vals) == 1:
+            op = "<>"
+    key = (_ident(p["column"]), op, vals)
+    return ((_ident(p["table"]),) + key) if with_table else key
+
+
+def clean_predicates(predicates):
+    """Drop malformed LLM predicates (missing table/column/op) and wrap a string 'values' in a list."""
+    out = []
+    for p in predicates if isinstance(predicates, list) else []:
+        if not isinstance(p, dict) or not all(p.get(k) for k in ("table", "column", "op")):
+            continue
+        p = dict(p)
+        if isinstance(p.get("values"), (str, int, float)):
+            p["values"] = [p["values"]]
+        elif p.get("values") is not None and not isinstance(p["values"], list):
+            continue
+        out.append(p)
+    return out
+
+
+def dk_scores(generated, gold, with_table=True):
+    """Recall over gold DK predicates; precision only over generated predicates on a gold DK column, so filters on
+    other columns (term codes, DELETED = 0, ...) are not penalized while a wrong value/operator on the right column is.
+    with_table=False ignores the table, crediting a valid alternative table for the same column."""
+    if not gold:
+        return None
+    gold_keys = {canon(p, with_table) for p in gold}
+    if with_table:
+        gold_cols = {(_ident(p["table"]), _ident(p["column"])) for p in gold}
+        on_cols = [g for g in generated if (_ident(g["table"]), _ident(g["column"])) in gold_cols]
+    else:
+        gold_cols = {_ident(p["column"]) for p in gold}
+        on_cols = [g for g in generated if _ident(g["column"]) in gold_cols]
+    gen_keys = {canon(g, with_table) for g in on_cols}
+    tp = len(gold_keys & gen_keys)
+    recall = tp / len(gold_keys)
+    precision = tp / len(gen_keys) if gen_keys else 0.0
+    return dict(precision=precision, recall=recall, f1=_f1(precision, recall))
+
+
+def _strings(xs):
+    return [x for x in xs if isinstance(x, (str, list, tuple))] if isinstance(xs, list) else []
+
+
+def normalized(extraction_output, gold_entry):
+    """(generated, gold) pairs per subtask after normalization: sets for tables/columns/join keys, predicate
+    lists for domain knowledge."""
+    extraction_output = extraction_output if isinstance(extraction_output, dict) else {}
+    gold_dk = gold_entry.get("domain_knowledge", [])
+    if not all(isinstance(d, dict) for d in gold_dk):
+        raise ValueError(f"{gold_entry.get('id')}: gold domain_knowledge is in the old string format; "
+                         "score against the v2 annotations")
+    return {
+        "tables": ({_ident(t) for t in _strings(extraction_output.get("tables")) if isinstance(t, str)},
+                   {_ident(t) for t in gold_entry.get("tables", [])}),
+        "columns": ({_col(c) for c in _strings(extraction_output.get("columns")) if isinstance(c, str)},
+                    {_col(c) for cols in gold_entry.get("column_mapping", {}).values() for c in cols}),
+        "join_keys": ({j for j in map(_join, _strings(extraction_output.get("join_keys"))) if _different_tables(j)},
+                      {_join(jk) for jk in gold_entry.get("join_keys", [])}),
+        "domain_knowledge": (clean_predicates(extraction_output.get("predicates")), gold_dk),
+    }
+
 
 def eval_extraction_output(extraction_output, gold_entry):
-    # Gold Standards
-    gold_tables = gold_entry.get("tables", [])
-    
-    # Flatten mapping dict
-    gold_columns = []
-    if "column_mapping" in gold_entry:
-        for k, v in gold_entry["column_mapping"].items():
-            gold_columns.extend(v)
-            
-    # Flatten join_keys list of lists -> list of strings "A=B"
-    gold_joins = []
-    if "join_keys" in gold_entry:
-        for jk in gold_entry["join_keys"]:
-            # jk is often [col1, col2]
-            if isinstance(jk, list) and len(jk) == 2:
-                gold_joins.append(f"{jk[0]} = {jk[1]}")
-            elif isinstance(jk, str):
-                gold_joins.append(jk)
-
-    # Domain knowledge: evidence lists
-    gold_predicates = []
-    gold_predicates.extend(extract_predicates_from_evidence(gold_entry.get("domain_knowledge", [])))
-
-    # Compute F1s
-    # 1. Tables
-    f1_tables = compute_f1(extraction_output.get("tables", []), gold_tables)
-    
-    # 2. Columns
-    f1_columns = compute_f1(extraction_output.get("columns", []), gold_columns)
-    
-    # 3. Join Keys (Requires normalization)
-    gen_joins_norm = set([normalize_join_key(j) for j in extraction_output.get("join_keys", [])])
-    gold_joins_norm = set([normalize_join_key(j) for j in gold_joins])
-    
-    tp_j = len(gen_joins_norm.intersection(gold_joins_norm))
-    fp_j = len(gen_joins_norm - gold_joins_norm)
-    fn_j = len(gold_joins_norm - gen_joins_norm)
-    
-    prec_j = tp_j / (tp_j + fp_j) if (tp_j + fp_j) > 0 else 0
-    rec_j = tp_j / (tp_j + fn_j) if (tp_j + fn_j) > 0 else 0
-    f1_joins = 2 * (prec_j * rec_j) / (prec_j + rec_j) if (prec_j + rec_j) > 0 else 0
-
-    # 4. Domain Knowledge (Predicates)
-    gen_predicates = set(extraction_output.get("domain_knowledge", []))
-
-    clean_gen_predicates = set()
-    for p in gen_predicates:
-        if ' = ' in p:
-            clean_gen_predicates.add(p)
-        elif ' IN ' in p:
-            p = p.replace(' IN (', ' = ').replace(')', '')
-            clean_gen_predicates.add(p)
-        else:
-            pass
-    cleaned_gold_predicates = []
-    for p in gold_predicates:
-        # update p to remove ' IN (' and ')' in the list
-        p = p.replace(' IN (', ' = ').replace(')', '')
-        cleaned_gold_predicates.append(p)
-
-    f1_domain = compute_predicate_f1(clean_gen_predicates, cleaned_gold_predicates)
-
+    sets = normalized(extraction_output, gold_entry)
+    gen_dk, gold_dk = sets["domain_knowledge"]
+    dk = dk_scores(gen_dk, gold_dk) or {}
+    dk_lenient = dk_scores(gen_dk, gold_dk, with_table=False) or {}
     return {
-        "table_retrieval_f1": f1_tables,
-        "column_mapping_f1": f1_columns,
-        "join_key_f1": f1_joins,
-        "domain_knowledge_f1": f1_domain
+        "table_retrieval_f1": set_f1(*sets["tables"]),
+        # Gold lists only the columns the question refers to, a subset of the columns the SQL uses, so recall only
+        "column_mapping_recall": set_recall(*sets["columns"]),
+        "join_key_f1": join_f1(*sets["join_keys"]),
+        "domain_knowledge_f1": dk.get("f1"),
+        "domain_knowledge_precision": dk.get("precision"),
+        "domain_knowledge_recall": dk.get("recall"),
+        "domain_knowledge_f1_lenient": dk_lenient.get("f1"),
     }

@@ -1,9 +1,12 @@
 import re
 from abc import ABC, abstractmethod
-from openai import OpenAI
-import os
 import json
 import time
+
+from .llm_client import make_client, call_with_backoff
+
+# Model for subtask extraction and the decomposition judge (evaluate_subtasks.py, sanity_check_subtasks.py)
+EVAL_MODEL = "openai/openai/gpt-6-luna"
 
 def extract_json_block(text):
     """
@@ -27,9 +30,10 @@ class BaseChat(ABC):
         pass
 
 class GPTChat(BaseChat):
-    def __init__(self, model="gpt-5-mini"):
+    def __init__(self, model=EVAL_MODEL):
         super().__init__(model)
-        self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        # Same endpoint choice (LLM_BASE_URL etc.), LLM_RPM pacing and rate-limit waits as the baselines
+        self.client = make_client(model)
 
     def get_response(self, prompt, json_mode=False) -> str:
         self.messages = [{"role": "user", "content": prompt}]
@@ -43,7 +47,7 @@ class GPTChat(BaseChat):
                 # and usually requires the word "JSON" in the prompt (which we have).
                 kwargs["response_format"] = {"type": "json_object"}
                 
-            response = self.client.chat.completions.create(**kwargs)
+            response = call_with_backoff(lambda: self.client.chat.completions.create(**kwargs), label=f"model={self.model}")
             return response.choices[0].message.content
         except Exception as e:
             print(f"Error calling LLM: {e}")

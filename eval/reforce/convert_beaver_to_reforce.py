@@ -16,20 +16,43 @@ sys.path.append(str(Path(__file__).resolve().parent.parent / "utils"))
 from hints import dk_sentences
 
 
+# Sample values that are multi-line or longer than this are free text (messages, emails, essays) and are left out of
+# the schema description: in sp, such values make the model's content filter refuse the whole prompt. JSON values
+# (structured, e.g. nova's CPU_INFO) are kept. With this rule only sp's prompts change (dw: 1 column, never in a
+# Setting 0 prompt; nova, neutron: none), so ReFoRCE runs made before it are unaffected outside sp.
+MAX_EXAMPLE_CHARS = 200
+
+
+def _is_json(value):
+    v = value.strip()
+    if not v or v[0] not in "{[":
+        return False
+    try:
+        json.loads(v)
+        return True
+    except ValueError:
+        return v[-1] in "}]"
+
+
+def is_free_text(value):
+    return ("\n" in value or "\r" in value or len(value) > MAX_EXAMPLE_CHARS) and not _is_json(value)
+
+
 def format_instances_as_examples(instances, column_names):
     """
     Convert instances to example strings for each column.
-    
+
     Args:
         instances: List of lists, where each inner list contains values for one column
         column_names: List of column names
-    
+
     Returns:
-        Dict mapping column names to example value strings
+        Dict mapping column names to example value strings (free-text values dropped; a column whose sample
+        values are all free text gets no examples)
     """
     if not instances or not column_names:
         return {}
-    
+
     examples = {}
     for i, col_name in enumerate(column_names):
         if i < len(instances):
@@ -37,9 +60,10 @@ def format_instances_as_examples(instances, column_names):
             col_values = instances[i]
             if col_values:
                 # Convert values to strings and limit
-                value_strs = [str(v) for v in col_values[:3]]
-                examples[col_name] = value_strs
-    
+                value_strs = [s for s in (str(v) for v in col_values[:3]) if not is_free_text(s)]
+                if value_strs:
+                    examples[col_name] = value_strs
+
     return examples
 
 

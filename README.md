@@ -196,7 +196,7 @@ For each subtask (except query decomposition), we compare information extracted 
 ```bash
 python evaluate_subtasks.py --dataset [dataset] --model [model] --input_dir unified-output/[method]/[run_name]
 ```
-<!-- *(This produces `summary_subtasks.json` and detailed outputs in folder `subtask_eval/` in the `input_dir`)* -->
+<!-- *(This produces `summary_subtask_eval_v2.json` and detailed outputs in folder `subtask_eval_v2/` in the `input_dir`)* -->
 
 ### Cost
 Every method records the token usage of each LLM call while generating SQL. The cost is computed from the tokens at the list prices in `PRICES` in `eval/utils/cost.py`; models without a price there are reported in tokens only.
